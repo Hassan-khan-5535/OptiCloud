@@ -11,7 +11,7 @@ export function RollbackButton({ remediationActionId }: { remediationActionId: s
     setState('loading');
     setMessage('');
     try {
-      const response = await fetch(`${CLIENT_API_URL}/api/remediations/${remediationActionId}/rollback`, { method: 'POST' });
+      const response = await fetch(`${CLIENT_API_URL}/remediations/${remediationActionId}/rollback`, { method: 'POST' });
       const body = await response.json() as { error?: string };
       if (!response.ok) throw new Error(body.error ?? 'Rollback request failed');
       setState('queued');

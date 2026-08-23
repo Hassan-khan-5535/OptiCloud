@@ -40,10 +40,10 @@ test('duplicate signed Approve delivery transitions and enqueues exactly once', 
     },
   };
   let enqueues = 0;
-  const queue: RemediationQueue = { async enqueue(findingId) { enqueues += 1; assert.equal(findingId, 'finding-123'); }, async enqueueRollback() {} };
+  const queue: RemediationQueue = { async enqueue(findingId, orgId) { enqueues += 1; assert.equal(findingId, 'finding-123'); assert.equal(orgId, 'org-test'); }, async enqueueRollback() {} };
   let updates = 0;
   const slack: SlackMessageClient = { chat: { async update(input) { updates += 1; assert.equal(input.channel, 'C123'); assert.equal(input.ts, '1712345678.000100'); } } };
-  const deps = { repository, queue, slack, signingSecret, nowSeconds: timestamp };
+  const deps = { repository, queue, slack, signingSecret, orgId: 'org-test', nowSeconds: timestamp };
   const body = {
     type: 'block_actions',
     user: { id: 'U123' },
@@ -77,6 +77,7 @@ test('invalid Slack signature is rejected before repository access', async () =>
       queue: { async enqueue() {}, async enqueueRollback() {} },
       slack: { chat: { async update() {} } },
       signingSecret,
+      orgId: 'org-test',
       nowSeconds: timestamp,
     }),
     (error: unknown) => error instanceof SlackRequestError && error.statusCode === 401,

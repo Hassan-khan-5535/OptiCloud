@@ -1,4 +1,7 @@
 import Link from 'next/link';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '../../auth';
+import { UserMenu } from './user-menu';
 
 const navigation = [
   { href: '/', label: 'Overview', short: 'OV' },
@@ -6,7 +9,8 @@ const navigation = [
   { href: '/accounts', label: 'Cloud accounts', short: 'AC' },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export async function AppShell({ children }: { children: React.ReactNode }) {
+  const session = await getServerSession(authOptions);
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-100">
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col border-r border-slate-800/80 bg-[#0a0f18] lg:flex">
@@ -29,7 +33,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <div className="mt-auto border-t border-slate-800/80 p-5">
           <div className="flex items-center gap-2 text-xs text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />All systems nominal</div>
-          <p className="mt-2 text-[11px] leading-5 text-slate-600">Single-tenant workspace<br />Stage 7 · policy engine hardening</p>
+          <p className="mt-2 text-[11px] leading-5 text-slate-600">Organization workspace<br />Stage 8 · authenticated control plane</p>
         </div>
       </aside>
 
@@ -40,7 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="text-xs font-bold tracking-[0.2em]">CINDR</span>
           </div>
           <div className="hidden text-xs text-slate-500 lg:block">FinOps / <span className="text-slate-300">Operations</span></div>
-          <div className="ml-auto flex items-center gap-4 text-xs text-slate-500"><span className="hidden sm:inline">AWS production workspace</span><span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />Live</div>
+          <div className="ml-auto flex items-center gap-4 text-xs text-slate-500"><span className="hidden sm:inline">AWS production workspace</span><span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />Live {session && <UserMenu name={session.user.name} email={session.user.email} />}</div>
         </header>
         <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-[1440px] px-5 py-8 md:px-8 md:py-10">{children}</main>
       </div>

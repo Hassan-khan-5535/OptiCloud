@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { Queue } from 'bullmq';
 import { buildWasteFindingMessage, parseApprovalActionValue, type SlackMessagePayload, type WasteFindingMessageInput } from '@cindr/slack';
-import { auditLog, policies, resources, transitionWasteFinding, type AuditActor, type Db, type FindingStatus } from '@cindr/db';
+import { auditLog, orgScope, policies, resources, transitionWasteFinding, type AuditActor, type Db, type FindingStatus } from '@cindr/db';
 import { wasteFindings } from '@cindr/db';
 
 export type SlackInteractionBody = {
@@ -10,6 +10,8 @@ export type SlackInteractionBody = {
   user?: { id?: string };
   actions?: Array<{ action_id?: string; value?: string }>;
   message?: { ts?: string; channel?: { id?: string } | string };
+  team_id?: string;
+  team?: { id?: string };
 };
 
 export type SlackMessageClient = {
@@ -44,8 +46,8 @@ export type ApprovalRepository = {
 };
 
 export type RemediationQueue = {
-  enqueue(findingId: string): Promise<void>;
-  enqueueRollback(remediationActionId: string): Promise<void>;
+  enqueue(findingId: string, orgId: string): Promise<void>;
+  enqueueRollback(remediationActionId: string, orgId: string): Promise<void>;
 };
 
 export class SlackRequestError extends Error {
@@ -78,9 +80,9 @@ export function verifySlackSignature(
 export class BullMqRemediationQueue implements RemediationQueue {
   constructor(private readonly queue: Queue) {}
 
-  async enqueue(findingId: string): Promise<void> {
+  async enqueue(findingId: string, orgId: string): Promise<void> {
     // A deterministic BullMQ jobId makes Slack retries and double-clicks converge on one queued remediation.
-    await this.queue.add('execute-remediation', { kind: 'remediation', findingId }, {
+    await this.queue.add('execute-remediation', { kind: 'remediation', findingId, orgId }, {
       jobId: `cindr-remediation:${findingId}`,
       attempts: 3,
       backoff: { type: 'exponential', delay: 1000 },
@@ -89,8 +91,8 @@ export class BullMqRemediationQueue implements RemediationQueue {
     });
   }
 
-  async enqueueRollback(remediationActionId: string): Promise<void> {
-    await this.queue.add('rollback-remediation', { kind: 'rollback', remediationActionId }, {
+  async enqueueRollback(remediationActionId: string, orgId: string): Promise<void> {
+    await this.queue.add('rollback-remediation', { kind: 'rollback', remediationActionId, orgId }, {
       jobId: `cindr-rollback:${remediationActionId}`,
       attempts: 3,
       backoff: { type: 'exponential', delay: 1000 },
@@ -101,7 +103,7 @@ export class BullMqRemediationQueue implements RemediationQueue {
 }
 
 export class DrizzleApprovalRepository implements ApprovalRepository {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly orgId: string) {}
 
   async getFindingContext(findingId: string): Promise<FindingContext | null> {
     const [row] = await this.db.select({
@@ -116,13 +118,13 @@ export class DrizzleApprovalRepository implements ApprovalRepository {
       resourceType: resources.type,
       region: resources.region,
       metadata: resources.metadata,
-    }).from(wasteFindings).innerJoin(resources, eq(resources.id, wasteFindings.resourceId)).where(eq(wasteFindings.id, findingId)).limit(1);
+    }).from(wasteFindings).innerJoin(resources, eq(resources.id, wasteFindings.resourceId)).where(and(orgScope(wasteFindings.orgId, this.orgId, eq(wasteFindings.id, findingId)), orgScope(resources.orgId, this.orgId))).limit(1);
     if (!row) return null;
 
     const policyRows = await this.db.select({ rule: policies.rule })
       .from(policies)
       .innerJoin(resources, eq(resources.cloudAccountId, policies.cloudAccountId))
-      .where(and(eq(resources.cloudAccountId, row.cloudAccountId), eq(policies.active, true)));
+      .where(and(orgScope(policies.orgId, this.orgId), orgScope(resources.orgId, this.orgId, eq(resources.cloudAccountId, row.cloudAccountId)), eq(policies.active, true)));
     const policy = policyRows.find(({ rule }) => rule.finding_type === row.findingType && rule.action === 'auto_approve');
     const currentCost = typeof row.metadata.currentMonthlyCostCents === 'number' ? row.metadata.currentMonthlyCostCents : row.savings;
     return {
@@ -141,7 +143,7 @@ export class DrizzleApprovalRepository implements ApprovalRepository {
   }
 
   async transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void> {
-    await transitionWasteFinding(this.db, input);
+    await transitionWasteFinding(this.db, { ...input, orgId: this.orgId });
   }
 }
 
@@ -150,6 +152,7 @@ export type SlackInteractionDependencies = {
   queue: RemediationQueue;
   slack: SlackMessageClient;
   signingSecret: string;
+  orgId: string;
   nowSeconds?: number;
 };
 
@@ -183,7 +186,7 @@ export async function handleSlackInteraction(
     reason: isApproval ? 'Approved from Slack interactive message' : 'Denied from Slack interactive message',
   });
 
-  if (isApproval) await deps.queue.enqueue(finding.id);
+  if (isApproval) await deps.queue.enqueue(finding.id, deps.orgId);
 
   const resolved = await deps.repository.getFindingContext(finding.id);
   const message = buildWasteFindingMessage(toWasteFindingMessageInput(resolved ?? { ...finding, status: isApproval ? 'approved' : 'denied' }));

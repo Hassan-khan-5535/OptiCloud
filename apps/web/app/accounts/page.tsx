@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ConnectAccountButton } from '../components/connect-account-button';
-import { formatDate, serverApiFetch, type Account } from '../lib/api';
+import { formatDate, type Account } from '../lib/api';
+import { serverApiFetch } from '../lib/server-api';
 
 export default async function AccountsPage() {
   let accounts: Account[] = [];

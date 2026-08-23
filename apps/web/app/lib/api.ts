@@ -71,24 +71,7 @@ export type Account = {
   createdAt: string | null;
 };
 
-const SERVER_API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
-
-export async function serverApiFetch<T>(path: string): Promise<T> {
-  const response = await fetch(`${SERVER_API_URL}${path}`, { cache: 'no-store' });
-  if (!response.ok) {
-    let message = `API request failed (${response.status})`;
-    try {
-      const body = await response.json() as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      // Keep the status-based message when the API body is not JSON.
-    }
-    throw new Error(message);
-  }
-  return response.json() as Promise<T>;
-}
-
-export const CLIENT_API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+export const CLIENT_API_URL = '/api/cindr';
 
 export function formatCurrency(cents: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);

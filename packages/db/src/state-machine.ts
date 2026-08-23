@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
 import { auditLog, remediationActions, wasteFindings } from './schema.js';
+import { orgScope } from './tenant.js';
 
 export type FindingStatus = (typeof schema.wasteFindingStatusEnum.enumValues)[number];
 export type RemediationActionStatus = (typeof schema.remediationActionStatusEnum.enumValues)[number];
@@ -69,21 +70,22 @@ export function getRemediationActionTransitions(): Readonly<Record<RemediationAc
 
 export async function transitionWasteFinding(
   db: Db,
-  input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason?: string },
+  input: { orgId: string; findingId: string; toStatus: FindingStatus; actor: AuditActor; reason?: string },
 ) {
   return db.transaction(async (tx) => {
-    const [current] = await tx.select().from(wasteFindings).where(eq(wasteFindings.id, input.findingId)).for('update');
+    const [current] = await tx.select().from(wasteFindings).where(orgScope(wasteFindings.orgId, input.orgId, eq(wasteFindings.id, input.findingId))).for('update');
     if (!current) throw new Error(`Waste finding not found: ${input.findingId}`);
     assertFindingTransition(current.status, input.toStatus);
     if (current.status === input.toStatus) return current;
 
     const [updated] = await tx.update(wasteFindings)
       .set({ status: input.toStatus, updatedAt: new Date() })
-      .where(and(eq(wasteFindings.id, current.id), eq(wasteFindings.status, current.status)))
+      .where(and(orgScope(wasteFindings.orgId, input.orgId), eq(wasteFindings.id, current.id), eq(wasteFindings.status, current.status)))
       .returning();
     if (!updated) throw new Error(`Waste finding changed while transitioning: ${input.findingId}`);
 
     await tx.insert(auditLog).values({
+      orgId: current.orgId,
       entityType: 'waste_finding',
       entityId: current.id,
       fromStatus: current.status,
@@ -97,10 +99,10 @@ export async function transitionWasteFinding(
 
 export async function transitionRemediationAction(
   db: Db,
-  input: { actionId: string; toStatus: RemediationActionStatus; actor: AuditActor; reason?: string },
+  input: { orgId: string; actionId: string; toStatus: RemediationActionStatus; actor: AuditActor; reason?: string },
 ) {
   return db.transaction(async (tx) => {
-    const [current] = await tx.select().from(remediationActions).where(eq(remediationActions.id, input.actionId)).for('update');
+    const [current] = await tx.select().from(remediationActions).where(orgScope(remediationActions.orgId, input.orgId, eq(remediationActions.id, input.actionId))).for('update');
     if (!current) throw new Error(`Remediation action not found: ${input.actionId}`);
     assertRemediationActionTransition(current.status, input.toStatus);
     if (current.status === input.toStatus) return current;
@@ -112,11 +114,12 @@ export async function transitionRemediationAction(
         updatedAt: new Date(),
         ...(completedAt ? { executedAt: completedAt, executedBy: input.actor } : {}),
       })
-      .where(and(eq(remediationActions.id, current.id), eq(remediationActions.status, current.status)))
+      .where(and(orgScope(remediationActions.orgId, input.orgId), eq(remediationActions.id, current.id), eq(remediationActions.status, current.status)))
       .returning();
     if (!updated) throw new Error(`Remediation action changed while transitioning: ${input.actionId}`);
 
     await tx.insert(auditLog).values({
+      orgId: current.orgId,
       entityType: 'remediation_action',
       entityId: current.id,
       fromStatus: current.status,

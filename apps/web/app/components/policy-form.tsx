@@ -24,7 +24,7 @@ export function PolicyForm({ accounts }: { accounts: Account[] }) {
     setState('saving');
     setMessage('');
     try {
-      const response = await fetch(`${CLIENT_API_URL}/api/policies`, {
+      const response = await fetch(`${CLIENT_API_URL}/policies`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

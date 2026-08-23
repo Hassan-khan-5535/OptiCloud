@@ -63,6 +63,7 @@ function points(resourceId: string, metricName: string, count: number, value: nu
 
 function context(resources: MetricsResource[], metrics: CloudMetricPoint[], store = new MemoryDetectionStore()): DetectorContext & { store: MemoryDetectionStore } {
   return {
+    orgId: 'org-test',
     provider: new MockCloudMetricsProvider(resources, metrics, Object.fromEntries(resources.map((resource) => [resource.resourceId, 1000]))),
     store,
     config: detectionConfigFromEnv({

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { StatusBadge } from './components/status-badge';
-import { formatCurrency, humanize, serverApiFetch, type Overview } from './lib/api';
+import { formatCurrency, humanize, type Overview } from './lib/api';
+import { serverApiFetch } from './lib/server-api';
 
 function PageHeader() {
   return (

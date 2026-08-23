@@ -3,7 +3,8 @@ import { notFound } from 'next/navigation';
 import { FindingTimeline } from '../../components/finding-timeline';
 import { RollbackButton } from '../../components/rollback-button';
 import { StatusBadge } from '../../components/status-badge';
-import { formatCurrency, formatDate, humanize, serverApiFetch, type FindingDetail } from '../../lib/api';
+import { formatCurrency, formatDate, humanize, type FindingDetail } from '../../lib/api';
+import { serverApiFetch } from '../../lib/server-api';
 
 function JsonBlock({ value }: { value: Record<string, unknown> }) {
   return <pre className="max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-[#070b12] p-4 font-mono text-xs leading-6 text-cyan-100/80">{JSON.stringify(value, null, 2)}</pre>;

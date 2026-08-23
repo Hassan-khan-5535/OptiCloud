@@ -10,4 +10,18 @@ spec:
       containers:
         - name: worker
           image: cindr/worker:latest
-          envFrom: [{ configMapRef: { name: cindr-worker-config } }]
+          envFrom:
+            - configMapRef: { name: cindr-worker-config }
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: DATABASE_URL } }
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: AWS_ACCESS_KEY_ID, optional: true } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: AWS_SECRET_ACCESS_KEY, optional: true } }
+            - name: AWS_SESSION_TOKEN
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: AWS_SESSION_TOKEN, optional: true } }
+          startupProbe:
+            exec: { command: ["sh", "-c", "kill -0 1"] }
+            failureThreshold: 30
+            periodSeconds: 10

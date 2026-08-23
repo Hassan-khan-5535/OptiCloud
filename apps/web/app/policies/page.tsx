@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { PolicyForm } from '../components/policy-form';
-import { formatDate, humanize, serverApiFetch, type Account, type Policy } from '../lib/api';
+import { formatDate, humanize, type Account, type Policy } from '../lib/api';
+import { serverApiFetch } from '../lib/server-api';
 
 export default async function PoliciesPage() {
   let policies: Policy[] = [];

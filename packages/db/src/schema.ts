@@ -54,18 +54,40 @@ export const auditEntityTypeEnum = pgEnum('audit_entity_type', [
 ]);
 export const policyEvaluationModeEnum = pgEnum('policy_evaluation_mode', ['live', 'dry_run']);
 
+export const organizations = pgTable('organizations', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  slug: varchar('slug', { length: 128 }).notNull().unique(),
+  name: varchar('name', { length: 255 }).notNull(),
+  slackTeamId: varchar('slack_team_id', { length: 64 }).unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const organizationMembers = pgTable('organization_members', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  userSubject: varchar('user_subject', { length: 255 }).notNull(),
+  email: varchar('email', { length: 320 }),
+  role: varchar('role', { length: 32 }).default('member').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userOrgUnique: uniqueIndex('organization_members_user_org_idx').on(table.userSubject, table.orgId),
+}));
+
 export const cloudAccounts = pgTable('cloud_accounts', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   provider: cloudProviderEnum('provider').notNull(),
   externalId: varchar('external_id', { length: 255 }).notNull(),
   credentialsRef: varchar('credentials_ref', { length: 512 }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
-  providerExternalIdUnique: uniqueIndex('cloud_accounts_provider_external_id_idx').on(table.provider, table.externalId),
+  providerExternalIdUnique: uniqueIndex('cloud_accounts_provider_external_id_idx').on(table.orgId, table.provider, table.externalId),
 }));
 
 export const resources = pgTable('resources', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   cloudAccountId: uuid('cloud_account_id').notNull().references(() => cloudAccounts.id, { onDelete: 'cascade' }),
   type: resourceTypeEnum('type').notNull(),
   externalId: varchar('external_id', { length: 255 }).notNull(),
@@ -80,6 +102,7 @@ export const resources = pgTable('resources', {
 
 export const resourceMetrics = pgTable('resource_metrics', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   resourceId: uuid('resource_id').notNull().references(() => resources.id, { onDelete: 'cascade' }),
   metricName: varchar('metric_name', { length: 128 }).notNull(),
   value: doublePrecision('value').notNull(),
@@ -90,6 +113,7 @@ export const resourceMetrics = pgTable('resource_metrics', {
 
 export const wasteFindings = pgTable('waste_findings', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   resourceId: uuid('resource_id').notNull().references(() => resources.id, { onDelete: 'cascade' }),
   findingType: varchar('finding_type', { length: 128 }).notNull(),
   evidence: jsonb('evidence').$type<Record<string, unknown>>().default({}).notNull(),
@@ -106,6 +130,7 @@ export const wasteFindings = pgTable('waste_findings', {
 
 export const remediationActions = pgTable('remediation_actions', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   wasteFindingId: uuid('waste_finding_id').notNull().references(() => wasteFindings.id, { onDelete: 'cascade' }),
   actionType: remediationActionTypeEnum('action_type').notNull(),
   isReversible: boolean('is_reversible').notNull(),
@@ -120,6 +145,7 @@ export const remediationActions = pgTable('remediation_actions', {
 
 export const auditLog = pgTable('audit_log', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   entityType: auditEntityTypeEnum('entity_type').notNull(),
   entityId: uuid('entity_id').notNull(),
   fromStatus: varchar('from_status', { length: 32 }),
@@ -133,6 +159,7 @@ export const auditLog = pgTable('audit_log', {
 
 export const policies = pgTable('policies', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   cloudAccountId: uuid('cloud_account_id').notNull().references(() => cloudAccounts.id, { onDelete: 'cascade' }),
   rule: jsonb('rule').$type<PolicyRule>().notNull(),
   createdBy: varchar('created_by', { length: 255 }).notNull(),
@@ -143,6 +170,7 @@ export const policies = pgTable('policies', {
 
 export const policyEvaluations = pgTable('policy_evaluations', {
   id: uuid('id').defaultRandom().primaryKey(),
+  orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   policyId: uuid('policy_id').notNull().references(() => policies.id, { onDelete: 'cascade' }),
   wasteFindingId: uuid('waste_finding_id').notNull().references(() => wasteFindings.id, { onDelete: 'cascade' }),
   mode: policyEvaluationModeEnum('mode').notNull(),
@@ -154,6 +182,8 @@ export const policyEvaluations = pgTable('policy_evaluations', {
   policyFindingCreatedIdx: index('policy_evaluations_policy_finding_created_idx').on(table.policyId, table.wasteFindingId, table.createdAt),
 }));
 
+export type Organization = typeof organizations.$inferSelect;
+export type OrganizationMember = typeof organizationMembers.$inferSelect;
 export type CloudAccount = typeof cloudAccounts.$inferSelect;
 export type Resource = typeof resources.$inferSelect;
 export type ResourceMetric = typeof resourceMetrics.$inferSelect;

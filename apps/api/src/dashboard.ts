@@ -12,6 +12,7 @@ import {
   type Db,
   type PolicyCondition,
   type PolicyAction,
+  orgScope,
 } from '@cindr/db';
 
 const OPEN_DASHBOARD_STATUSES = ['detected', 'proposed', 'approved', 'executing'] as const;
@@ -68,7 +69,7 @@ function serializeFinding(row: {
   };
 }
 
-export async function getDashboardOverview(db: Db) {
+export async function getDashboardOverview(db: Db, orgId: string) {
   const openRows = await db.select({
     id: wasteFindings.id,
     findingType: wasteFindings.findingType,
@@ -86,8 +87,8 @@ export async function getDashboardOverview(db: Db) {
   }).from(wasteFindings)
     .innerJoin(resources, eq(resources.id, wasteFindings.resourceId))
     .innerJoin(cloudAccounts, eq(cloudAccounts.id, resources.cloudAccountId))
-    .where(inArray(wasteFindings.status, [...OPEN_DASHBOARD_STATUSES]));
-  const completedRows = await db.select({ savings: wasteFindings.estimatedMonthlySavingsCents }).from(wasteFindings).where(eq(wasteFindings.status, 'completed'));
+    .where(orgScope(wasteFindings.orgId, orgId, inArray(wasteFindings.status, [...OPEN_DASHBOARD_STATUSES])));
+  const completedRows = await db.select({ savings: wasteFindings.estimatedMonthlySavingsCents }).from(wasteFindings).where(orgScope(wasteFindings.orgId, orgId, eq(wasteFindings.status, 'completed')));
   return {
     totals: {
       detectedMonthlyWasteCents: openRows.reduce((sum, row) => sum + row.estimatedMonthlySavingsCents, 0),
@@ -98,7 +99,7 @@ export async function getDashboardOverview(db: Db) {
   };
 }
 
-export async function getFindingDetail(db: Db, findingId: string) {
+export async function getFindingDetail(db: Db, findingId: string, orgId: string) {
   const [row] = await db.select({
     id: wasteFindings.id,
     findingType: wasteFindings.findingType,
@@ -124,7 +125,7 @@ export async function getFindingDetail(db: Db, findingId: string) {
     .innerJoin(resources, eq(resources.id, wasteFindings.resourceId))
     .innerJoin(cloudAccounts, eq(cloudAccounts.id, resources.cloudAccountId))
     .leftJoin(remediationActions, eq(remediationActions.wasteFindingId, wasteFindings.id))
-    .where(eq(wasteFindings.id, findingId)).limit(1);
+    .where(orgScope(wasteFindings.orgId, orgId, eq(wasteFindings.id, findingId))).limit(1);
   if (!row) return null;
   const audit = await db.select({
     id: auditLog.id,
@@ -133,7 +134,7 @@ export async function getFindingDetail(db: Db, findingId: string) {
     actor: auditLog.actor,
     reason: auditLog.reason,
     createdAt: auditLog.createdAt,
-  }).from(auditLog).where(and(eq(auditLog.entityType, 'waste_finding'), eq(auditLog.entityId, findingId))).orderBy(auditLog.createdAt);
+  }).from(auditLog).where(orgScope(auditLog.orgId, orgId, and(eq(auditLog.entityType, 'waste_finding'), eq(auditLog.entityId, findingId)))).orderBy(auditLog.createdAt);
   const metadata = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata) ? row.metadata as JsonRecord : {};
   const currentMonthlyCostCents = typeof metadata.currentMonthlyCostCents === 'number' ? metadata.currentMonthlyCostCents : row.estimatedMonthlySavingsCents;
   return {
@@ -149,7 +150,7 @@ export async function getFindingDetail(db: Db, findingId: string) {
   };
 }
 
-export async function listPolicies(db: Db) {
+export async function listPolicies(db: Db, orgId: string) {
   const rows = await db.select({
     id: policies.id,
     rule: policies.rule,
@@ -160,7 +161,7 @@ export async function listPolicies(db: Db) {
     accountId: cloudAccounts.id,
     provider: cloudAccounts.provider,
     accountExternalId: cloudAccounts.externalId,
-  }).from(policies).innerJoin(cloudAccounts, eq(cloudAccounts.id, policies.cloudAccountId)).orderBy(desc(policies.createdAt));
+  }).from(policies).innerJoin(cloudAccounts, eq(cloudAccounts.id, policies.cloudAccountId)).where(orgScope(policies.orgId, orgId)).orderBy(desc(policies.createdAt));
   const evaluations = await db.select({
     id: policyEvaluations.id,
     policyId: policyEvaluations.policyId,
@@ -170,7 +171,7 @@ export async function listPolicies(db: Db) {
     safe: policyEvaluations.safe,
     conditionResults: policyEvaluations.conditionResults,
     createdAt: policyEvaluations.createdAt,
-  }).from(policyEvaluations).orderBy(desc(policyEvaluations.createdAt));
+  }).from(policyEvaluations).where(orgScope(policyEvaluations.orgId, orgId)).orderBy(desc(policyEvaluations.createdAt));
 
   return rows.map((row) => ({ ...row, parsedRule: parsePolicyRule(row.rule).value })).filter((row): row is typeof row & { parsedRule: NonNullable<ReturnType<typeof parsePolicyRule>['value']> } => !!row.parsedRule && row.parsedRule.action === 'auto_approve').map((row) => ({
     id: row.id,
@@ -192,8 +193,8 @@ export async function listPolicies(db: Db) {
   }));
 }
 
-export async function listAccounts(db: Db) {
-  const rows = await db.select({ id: cloudAccounts.id, provider: cloudAccounts.provider, externalId: cloudAccounts.externalId, createdAt: cloudAccounts.createdAt }).from(cloudAccounts).orderBy(desc(cloudAccounts.createdAt));
+export async function listAccounts(db: Db, orgId: string) {
+  const rows = await db.select({ id: cloudAccounts.id, provider: cloudAccounts.provider, externalId: cloudAccounts.externalId, createdAt: cloudAccounts.createdAt }).from(cloudAccounts).where(eq(cloudAccounts.orgId, orgId)).orderBy(desc(cloudAccounts.createdAt));
   return rows.map((row) => ({ id: row.id, provider: row.provider, externalId: row.externalId, status: 'connected' as const, createdAt: serializeDate(row.createdAt) }));
 }
 
@@ -215,10 +216,10 @@ export function validatePolicyInput(input: unknown): { value?: PolicyInput; erro
   return { value: { cloudAccountId, name, findingType, action, conditions: [...parsed.value.all], active } };
 }
 
-export async function createPolicy(db: Db, input: PolicyInput) {
-  const accountId = input.cloudAccountId ?? (await db.select({ id: cloudAccounts.id }).from(cloudAccounts).orderBy(cloudAccounts.createdAt).limit(1))[0]?.id;
+export async function createPolicy(db: Db, input: PolicyInput, orgId: string) {
+  const accountId = input.cloudAccountId ?? (await db.select({ id: cloudAccounts.id }).from(cloudAccounts).where(eq(cloudAccounts.orgId, orgId)).orderBy(cloudAccounts.createdAt).limit(1))[0]?.id;
   if (!accountId) throw new Error('No connected cloud account is available');
   const rule = buildPolicyRule({ name: input.name, findingType: input.findingType, action: input.action, conditions: input.conditions });
-  const [created] = await db.insert(policies).values({ cloudAccountId: accountId, rule, createdBy: 'dashboard', active: input.active }).returning({ id: policies.id });
+  const [created] = await db.insert(policies).values({ orgId, cloudAccountId: accountId, rule, createdBy: 'dashboard', active: input.active }).returning({ id: policies.id });
   return { id: created?.id, rule, cloudAccountId: accountId, active: input.active };
 }

@@ -11,4 +11,20 @@ spec:
         - name: web
           image: cindr/web:latest
           ports: [{ containerPort: 3000 }]
-          envFrom: [{ configMapRef: { name: cindr-web-config } }]
+          envFrom:
+            - configMapRef: { name: cindr-web-config }
+          env:
+            - name: AUTH_SECRET
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: AUTH_SECRET } }
+            - name: GITHUB_ID
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: GITHUB_ID } }
+            - name: GITHUB_SECRET
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: GITHUB_SECRET } }
+          readinessProbe:
+            httpGet: { path: /auth/signin, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /auth/signin, port: 3000 }
+            initialDelaySeconds: 30
+            periodSeconds: 10

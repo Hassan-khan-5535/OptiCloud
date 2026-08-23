@@ -1,7 +1,7 @@
 import { and, eq, notInArray } from 'drizzle-orm';
 import type { CloudMetricPoint, CloudMetricsProvider, MetricsResource } from '@cindr/cloud-adapters';
 import { auditLog, createDb, policies, policyEvaluations, resources, wasteFindings } from '@cindr/db';
-import { transitionWasteFinding, type AuditActor, type Db, type FindingStatus } from '@cindr/db';
+import { transitionWasteFinding, orgScope, type AuditActor, type Db, type FindingStatus } from '@cindr/db';
 import { resourceMetrics } from '@cindr/db';
 import { evaluatePolicy, type PolicyEvaluation, type PolicyEvaluationContext } from './policy-engine.js';
 
@@ -44,15 +44,16 @@ export type DetectionStore = {
   recordMetrics(points: CloudMetricPoint[]): Promise<void>;
   upsertFinding(input: DetectionFindingInput): Promise<{ id: string; status: FindingStatus } | null>;
   evaluatePolicies(input: PolicyEvaluationContext & { resourceId: string; findingId: string }): Promise<PolicyEvaluation[]>;
-  transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void>;
+  transitionFinding(input: { orgId: string; findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void>;
 };
 
 export class DrizzleDetectionStore implements DetectionStore {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly orgId: string) {}
 
   async recordMetrics(points: CloudMetricPoint[]): Promise<void> {
     if (points.length === 0) return;
     await this.db.insert(resourceMetrics).values(points.map((point) => ({
+      orgId: this.orgId,
       resourceId: point.resourceId,
       metricName: point.metricName,
       value: point.value,
@@ -62,6 +63,7 @@ export class DrizzleDetectionStore implements DetectionStore {
 
   async upsertFinding(input: DetectionFindingInput): Promise<{ id: string; status: FindingStatus } | null> {
     const inserted = await this.db.insert(wasteFindings).values({
+      orgId: this.orgId,
       resourceId: input.resourceId,
       findingType: input.findingType,
       evidence: input.evidence,
@@ -73,6 +75,7 @@ export class DrizzleDetectionStore implements DetectionStore {
     const existing = await this.db.select({ id: wasteFindings.id, status: wasteFindings.status })
       .from(wasteFindings)
       .where(and(
+        orgScope(wasteFindings.orgId, this.orgId),
         eq(wasteFindings.resourceId, input.resourceId),
         eq(wasteFindings.findingType, input.findingType),
         notInArray(wasteFindings.status, ['completed', 'rolled_back', 'denied', 'expired']),
@@ -85,10 +88,14 @@ export class DrizzleDetectionStore implements DetectionStore {
     const rows = await this.db.select({ id: policies.id, active: policies.active, rule: policies.rule })
       .from(policies)
       .innerJoin(resources, eq(resources.cloudAccountId, policies.cloudAccountId))
-      .where(eq(resources.id, input.resourceId));
+      .where(and(
+        orgScope(resources.orgId, this.orgId, eq(resources.id, input.resourceId)),
+        orgScope(policies.orgId, this.orgId),
+      ));
     const evaluations = rows.map((policy) => evaluatePolicy(policy, input));
     for (const evaluation of evaluations) {
       await this.db.insert(policyEvaluations).values({
+        orgId: this.orgId,
         policyId: evaluation.policyId,
         wasteFindingId: input.findingId,
         mode: evaluation.mode,
@@ -98,6 +105,7 @@ export class DrizzleDetectionStore implements DetectionStore {
       });
       if (evaluation.mode === 'dry_run' && evaluation.matched) {
         await this.db.insert(auditLog).values({
+          orgId: this.orgId,
           entityType: 'waste_finding',
           entityId: input.findingId,
           fromStatus: null,
@@ -110,17 +118,19 @@ export class DrizzleDetectionStore implements DetectionStore {
     return evaluations;
   }
 
-  async transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void> {
+  async transitionFinding(input: { orgId: string; findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void> {
+    if (input.orgId !== this.orgId) throw new Error('Cross-organization transition rejected');
     await transitionWasteFinding(this.db, input);
   }
 }
 
-export function createDrizzleDetectionStore(): { store: DrizzleDetectionStore; pool: import('pg').Pool; db: Db } {
+export function createDrizzleDetectionStore(orgId: string): { store: DrizzleDetectionStore; pool: import('pg').Pool; db: Db } {
   const { db, pool } = createDb();
-  return { store: new DrizzleDetectionStore(db), pool, db };
+  return { store: new DrizzleDetectionStore(db, orgId), pool, db };
 }
 
 export type DetectorContext = {
+  orgId: string;
   provider: CloudMetricsProvider;
   store: DetectionStore;
   config: DetectionConfig;
@@ -159,6 +169,7 @@ export async function persistDetection(ctx: DetectorContext, input: DetectionFin
   const approvedBy = evaluations.find((evaluation) => evaluation.eligibleForApproval);
   if (finding.status !== 'detected') return;
   await ctx.store.transitionFinding({
+    orgId: ctx.orgId,
     findingId: finding.id,
     toStatus: 'proposed',
     actor,
@@ -167,6 +178,7 @@ export async function persistDetection(ctx: DetectorContext, input: DetectionFin
   result.findingsProposed += 1;
   if (approvedBy) {
     await ctx.store.transitionFinding({
+      orgId: ctx.orgId,
       findingId: finding.id,
       toStatus: 'approved',
       actor,

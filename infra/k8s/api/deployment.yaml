@@ -11,5 +11,24 @@ spec:
         - name: api
           image: cindr/api:latest
           ports: [{ containerPort: 4000 }]
-          envFrom: [{ configMapRef: { name: cindr-api-config } }]
-          readinessProbe: { httpGet: { path: /health, port: 4000 }, initialDelaySeconds: 5 }
+          envFrom:
+            - configMapRef: { name: cindr-api-config }
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: DATABASE_URL } }
+            - name: AUTH_SECRET
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: AUTH_SECRET } }
+            - name: SLACK_SIGNING_SECRET
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: SLACK_SIGNING_SECRET } }
+            - name: SLACK_BOT_TOKEN
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: SLACK_BOT_TOKEN } }
+            - name: SLACK_CHANNEL_ID
+              valueFrom: { secretKeyRef: { name: cindr-secrets, key: SLACK_CHANNEL_ID } }
+          readinessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 20
+            periodSeconds: 10

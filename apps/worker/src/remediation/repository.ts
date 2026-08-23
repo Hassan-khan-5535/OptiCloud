@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import {
   auditLog,
   cloudAccounts,
+  orgScope,
   remediationActions,
   resources,
   transitionRemediationAction,
@@ -30,7 +31,7 @@ export type ExecutionRecord = {
 };
 
 export class DrizzleRemediationRepository {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly orgId: string) {}
 
   async getExecutionRecord(findingId: string): Promise<ExecutionRecord | null> {
     const [row] = await this.db.select({
@@ -56,7 +57,7 @@ export class DrizzleRemediationRepository {
       .innerJoin(resources, eq(resources.id, wasteFindings.resourceId))
       .innerJoin(cloudAccounts, eq(cloudAccounts.id, resources.cloudAccountId))
       .leftJoin(remediationActions, eq(remediationActions.wasteFindingId, wasteFindings.id))
-      .where(eq(wasteFindings.id, findingId))
+      .where(orgScope(wasteFindings.orgId, this.orgId, eq(wasteFindings.id, findingId)))
       .limit(1);
     if (!row) return null;
     return {
@@ -85,7 +86,7 @@ export class DrizzleRemediationRepository {
   async getExecutionRecordByActionId(actionId: string): Promise<ExecutionRecord | null> {
     const [row] = await this.db.select({ findingId: remediationActions.wasteFindingId })
       .from(remediationActions)
-      .where(eq(remediationActions.id, actionId))
+      .where(orgScope(remediationActions.orgId, this.orgId, eq(remediationActions.id, actionId)))
       .limit(1);
     return row ? this.getExecutionRecord(row.findingId) : null;
   }
@@ -98,11 +99,12 @@ export class DrizzleRemediationRepository {
   }): Promise<ExecutionRecord['actionId']> {
     const existing = await this.db.select({ id: remediationActions.id })
       .from(remediationActions)
-      .where(eq(remediationActions.idempotencyKey, input.idempotencyKey))
+      .where(and(orgScope(remediationActions.orgId, this.orgId), eq(remediationActions.idempotencyKey, input.idempotencyKey)))
       .limit(1);
     if (existing[0]) return existing[0].id;
 
     const inserted = await this.db.insert(remediationActions).values({
+      orgId: this.orgId,
       wasteFindingId: input.findingId,
       actionType: input.actionType,
       isReversible: input.isReversible,
@@ -112,7 +114,7 @@ export class DrizzleRemediationRepository {
 
     const raced = await this.db.select({ id: remediationActions.id })
       .from(remediationActions)
-      .where(eq(remediationActions.idempotencyKey, input.idempotencyKey))
+      .where(and(orgScope(remediationActions.orgId, this.orgId), eq(remediationActions.idempotencyKey, input.idempotencyKey)))
       .limit(1);
     return raced[0]?.id ?? null;
   }
@@ -120,25 +122,26 @@ export class DrizzleRemediationRepository {
   async setRollbackAction(actionId: string, rollbackAction: RollbackInstruction): Promise<void> {
     await this.db.update(remediationActions)
       .set({ rollbackAction, updatedAt: new Date() })
-      .where(eq(remediationActions.id, actionId));
+      .where(orgScope(remediationActions.orgId, this.orgId, eq(remediationActions.id, actionId)));
   }
 
   async transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void> {
-    await transitionWasteFinding(this.db, input);
+    await transitionWasteFinding(this.db, { ...input, orgId: this.orgId });
   }
 
   async transitionAction(input: { actionId: string; toStatus: RemediationActionStatus; actor: AuditActor; reason: string }): Promise<void> {
-    await transitionRemediationAction(this.db, input);
+    await transitionRemediationAction(this.db, { ...input, orgId: this.orgId });
   }
 
   async recordActionNote(actionId: string, reason: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       const [action] = await tx.select({ status: remediationActions.status })
         .from(remediationActions)
-        .where(eq(remediationActions.id, actionId))
+        .where(orgScope(remediationActions.orgId, this.orgId, eq(remediationActions.id, actionId)))
         .limit(1);
       if (!action) throw new Error(`Remediation action not found: ${actionId}`);
       await tx.insert(auditLog).values({
+        orgId: this.orgId,
         entityType: 'remediation_action',
         entityId: actionId,
         fromStatus: action.status,

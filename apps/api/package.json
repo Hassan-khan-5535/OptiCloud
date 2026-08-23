@@ -3,7 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "tsx watch src/server.ts", "build": "tsc -p tsconfig.json", "start": "node dist/server.js", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "tsx --test src/slack-interactions.test.ts src/server.test.ts src/dashboard.test.ts" },
-  "dependencies": { "@cindr/cloud-adapters": "*", "@cindr/db": "*", "@cindr/slack": "*", "@fastify/cors": "^10.0.2", "@slack/web-api": "^7.9.3", "fastify": "^5.2.1" },
-  "devDependencies": { "@types/node": "^22.13.10", "tsx": "^4.19.3", "typescript": "^5.8.2" }
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/slack-interactions.test.ts src/server.test.ts src/dashboard.test.ts"
+  },
+  "dependencies": {
+    "@cindr/cloud-adapters": "*",
+    "@cindr/db": "*",
+    "@cindr/slack": "*",
+    "@fastify/cors": "^10.0.2",
+    "@slack/web-api": "^7.9.3",
+    "fastify": "^5.2.1",
+    "next-auth": "^4.24.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
 }

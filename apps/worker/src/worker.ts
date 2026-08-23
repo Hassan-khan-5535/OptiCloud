@@ -5,7 +5,8 @@ import {
   type CloudMetricsProvider,
   type CloudRemediationProvider,
 } from '@cindr/cloud-adapters';
-import { createDrizzleDetectionStore, detectionConfigFromEnv, runAllDetectors } from './detectors/index.js';
+import { createDrizzleDetectionStore, DrizzleDetectionStore, detectionConfigFromEnv, runAllDetectors } from './detectors/index.js';
+import { createDb, organizations } from '@cindr/db';
 import { DefaultRemediationEngine } from './remediation/engine.js';
 import { DrizzleRemediationRepository } from './remediation/repository.js';
 import { createRedisRateLimiter } from './remediation/rate-limiter.js';
@@ -15,6 +16,7 @@ type CindrJob = {
   resourceId?: string;
   findingId?: string;
   remediationActionId?: string;
+  orgId?: string;
 };
 
 const redisUrl = new URL(process.env.REDIS_URL ?? 'redis://localhost:6379');
@@ -23,25 +25,32 @@ const config = detectionConfigFromEnv();
 const metricsProvider: CloudMetricsProvider = new MockCloudMetricsProvider([], []);
 const remediationProvider: CloudRemediationProvider = new AwsSdkRemediationProvider();
 const queue = new Queue<CindrJob>('cindr-jobs', { connection });
-const { store, pool, db } = createDrizzleDetectionStore();
-const remediationRepository = new DrizzleRemediationRepository(db);
-const remediationEngine = new DefaultRemediationEngine(remediationRepository, remediationProvider, createRedisRateLimiter(process.env.REDIS_URL));
+const { db, pool } = createDb();
 
-async function processDetectionJob() {
-  const results = await runAllDetectors({ provider: metricsProvider, store, config });
-  console.info('[cindr-worker] detection run complete', results);
+function remediationEngineFor(orgId: string) {
+  return new DefaultRemediationEngine(new DrizzleRemediationRepository(db, orgId), remediationProvider, createRedisRateLimiter(process.env.REDIS_URL));
+}
+
+async function processDetectionJob(orgId?: string) {
+  const orgRows = orgId ? [{ id: orgId }] : await db.select({ id: organizations.id }).from(organizations);
+  const results = [];
+  for (const organization of orgRows) {
+    const store = new DrizzleDetectionStore(db, organization.id);
+    results.push(...await runAllDetectors({ orgId: organization.id, provider: metricsProvider, store, config }));
+  }
+  console.info('[cindr-worker] detection run complete', { organizations: orgRows.length, results });
   return results;
 }
 
 const processor = async (job: Job<CindrJob>) => {
-  if (job.data.kind === 'detection') return processDetectionJob();
-  if (job.data.kind === 'remediation' && job.data.findingId) {
-    const result = await remediationEngine.executeFinding(job.data.findingId);
+  if (job.data.kind === 'detection') return processDetectionJob(job.data.orgId);
+  if (job.data.kind === 'remediation' && job.data.findingId && job.data.orgId) {
+    const result = await remediationEngineFor(job.data.orgId).executeFinding(job.data.findingId);
     if (result.status === 'failed') throw new Error(result.reason ?? `Remediation failed for ${job.data.findingId}`);
     return result;
   }
-  if (job.data.kind === 'rollback' && job.data.remediationActionId) {
-    const result = await remediationEngine.rollbackRemediation(job.data.remediationActionId);
+  if (job.data.kind === 'rollback' && job.data.remediationActionId && job.data.orgId) {
+    const result = await remediationEngineFor(job.data.orgId).rollbackRemediation(job.data.remediationActionId);
     if (result.status === 'failed') throw new Error(result.reason ?? `Rollback failed for ${job.data.remediationActionId}`);
     return result;
   }

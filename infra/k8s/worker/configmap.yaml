@@ -3,3 +3,5 @@ kind: ConfigMap
 metadata: { name: cindr-worker-config }
 data:
   REDIS_URL: redis://cindr-redis:6379
+  AWS_REGION: us-east-1
+  DETECTION_SCHEDULE: "0 * * * *"

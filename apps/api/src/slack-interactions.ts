@@ -45,6 +45,7 @@ export type ApprovalRepository = {
 
 export type RemediationQueue = {
   enqueue(findingId: string): Promise<void>;
+  enqueueRollback(remediationActionId: string): Promise<void>;
 };
 
 export class SlackRequestError extends Error {
@@ -81,6 +82,18 @@ export class BullMqRemediationQueue implements RemediationQueue {
     // A deterministic BullMQ jobId makes Slack retries and double-clicks converge on one queued remediation.
     await this.queue.add('execute-remediation', { kind: 'remediation', findingId }, {
       jobId: `cindr-remediation:${findingId}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 1000 },
+      removeOnComplete: 25,
+      removeOnFail: 25,
+    });
+  }
+
+  async enqueueRollback(remediationActionId: string): Promise<void> {
+    await this.queue.add('rollback-remediation', { kind: 'rollback', remediationActionId }, {
+      jobId: `cindr-rollback:${remediationActionId}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 1000 },
       removeOnComplete: 25,
       removeOnFail: 25,
     });

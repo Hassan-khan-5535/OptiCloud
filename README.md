@@ -2,11 +2,11 @@
 
 > **Catch the waste before it burns.**
 
-Cindr is an automated FinOps and remediation platform for finding cloud waste, routing safe fixes through Slack approval, executing changes through provider adapters, and preserving a complete audit trail. This repository is the Cindr monorepo; Stage 1 established the service plumbing and Stage 2 adds the persistence model and approval/remediation state machine.
+Cindr is an automated FinOps and remediation platform for finding cloud waste, routing safe fixes through Slack approval, executing changes through provider adapters, and preserving a complete audit trail. This repository is the Cindr monorepo; Stages 1–5 establish the service plumbing, persistence and state machine, detection engine, Slack approval workflow, and bounded remediation execution.
 
 ## Current scope
 
-Stage 1 established a Fastify health-check API, Next.js dashboard scaffold, BullMQ no-op worker, AWS-first cloud adapter interface, Slack Block Kit builders, Docker Compose, Kubernetes base manifests, and architecture documentation. Stage 2 adds the Drizzle/PostgreSQL schema, generated SQL migrations, append-only audit protection, idempotent seed fixture, and guarded approval/remediation state machines. Detection, anomaly scoring, provider-side remediation execution, and rollback execution remain out of scope.
+Stage 1 established the Fastify API, Next.js dashboard scaffold, BullMQ worker, AWS-first adapter interface, Slack builders, Docker Compose, Kubernetes base manifests, and architecture documentation. Stage 2 adds the Drizzle/PostgreSQL schema, migrations, append-only audit protection, seed fixture, and guarded state machines. Stage 3 adds the three MVP detectors and TimescaleDB metrics. Stage 4 adds signed Slack approvals and idempotent remediation enqueueing. Stage 5 adds snapshot-first EBS deletion, provider-capability-aware load-balancer handling, one-tier RDS resizing, Redis-backed rate limiting, bounded retries, and rollback jobs.
 
 ## Local development with Docker Compose
 
@@ -49,6 +49,8 @@ npm run build
 npm run migrate --workspace @cindr/db
 npm run seed --workspace @cindr/db
 ```
+
+Stage 5 remediation controls are configured through `AWS_REQUESTS_PER_SECOND` and `GCP_REQUESTS_PER_SECOND`, both defaulting to five provider requests per second per cloud account. The dashboard rollback endpoint is `POST /api/remediations/:id/rollback`; it queues rollback for the worker rather than mutating infrastructure in the API process. See `docs/architecture.md` for the action safety judgment and provider configuration checklist.
 
 ## Kubernetes manifests
 

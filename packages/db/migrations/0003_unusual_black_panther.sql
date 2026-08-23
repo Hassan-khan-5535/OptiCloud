@@ -1,0 +1,1 @@
+ALTER TYPE "public"."remediation_action_type" ADD VALUE 'stop_load_balancer';

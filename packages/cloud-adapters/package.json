@@ -6,6 +6,6 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit" },
-  "dependencies": { "@aws-sdk/client-ec2": "^3.758.0" },
+  "dependencies": { "@aws-sdk/client-ec2": "^3.758.0", "@aws-sdk/client-elastic-load-balancing-v2": "^3.758.0", "@aws-sdk/client-rds": "^3.758.0" },
   "devDependencies": { "@types/node": "^22.13.10", "typescript": "^5.8.2" }
 }

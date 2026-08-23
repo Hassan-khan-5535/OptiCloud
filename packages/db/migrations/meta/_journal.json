@@ -22,6 +22,13 @@
       "when": 1787488913341,
       "tag": "0002_strange_romulus",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787490212136,
+      "tag": "0003_unusual_black_panther",
+      "breakpoints": true
     }
   ]
 }

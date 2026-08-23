@@ -93,9 +93,9 @@ export class DrizzleDetectionStore implements DetectionStore {
   }
 }
 
-export function createDrizzleDetectionStore(): { store: DrizzleDetectionStore; pool: import('pg').Pool } {
+export function createDrizzleDetectionStore(): { store: DrizzleDetectionStore; pool: import('pg').Pool; db: Db } {
   const { db, pool } = createDb();
-  return { store: new DrizzleDetectionStore(db), pool };
+  return { store: new DrizzleDetectionStore(db), pool, db };
 }
 
 export type DetectorContext = {

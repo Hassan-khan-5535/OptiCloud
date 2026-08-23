@@ -38,6 +38,7 @@ export const remediationActionTypeEnum = pgEnum('remediation_action_type', [
   'detach_volume',
   'delete_volume',
   'resize_instance',
+  'stop_load_balancer',
 ]);
 export const remediationActionStatusEnum = pgEnum('remediation_action_status', [
   'pending',

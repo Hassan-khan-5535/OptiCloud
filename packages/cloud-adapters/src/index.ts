@@ -11,3 +11,5 @@ export interface CloudProvider {
 
 export { AwsCloudProvider } from './aws.js';
 export * from './metrics.js';
+export * from './remediation.js';
+export { AwsSdkRemediationProvider } from './aws-remediation.js';

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import { WebClient } from '@slack/web-api';
@@ -85,6 +86,13 @@ export async function buildApp(overrides: ApiDependencies = {}): Promise<Fastify
     }
   });
 
+  app.post<{ Params: { remediationActionId: string } }>('/api/remediations/:remediationActionId/rollback', async (request, reply) => {
+    const queue = overrides.remediationQueue ?? (process.env.REDIS_URL ? createRemediationQueue() : undefined);
+    if (!queue) return reply.code(503).send({ error: 'Remediation queue is not configured' });
+    await queue.enqueueRollback(request.params.remediationActionId);
+    return reply.code(202).send({ ok: true, remediationActionId: request.params.remediationActionId, status: 'rollback_queued' });
+  });
+
   app.post<{ Params: { findingId: string } }>('/slack/findings/:findingId/notify', async (request, reply) => {
     const repository = overrides.findingRepository;
     const slack = overrides.slackClient ?? createDefaultSlackClient();
@@ -109,13 +117,15 @@ function resolveSlackDependencies(overrides: ApiDependencies): SlackInteractionD
   return { repository, queue, slack, signingSecret };
 }
 
-const app = await buildApp(createDefaultDependencies());
-const port = Number(process.env.PORT ?? 4000);
-const host = process.env.HOST ?? '0.0.0.0';
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const app = await buildApp(createDefaultDependencies());
+  const port = Number(process.env.PORT ?? 4000);
+  const host = process.env.HOST ?? '0.0.0.0';
 
-try {
-  await app.listen({ port, host });
-} catch (error) {
-  app.log.error(error);
-  process.exit(1);
+  try {
+    await app.listen({ port, host });
+  } catch (error) {
+    app.log.error(error);
+    process.exit(1);
+  }
 }

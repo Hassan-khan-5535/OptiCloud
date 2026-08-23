@@ -10,6 +10,7 @@
     "dev:web": "npm --workspace @cindr/web run dev",
     "dev:worker": "npm --workspace @cindr/worker run dev",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspace @cindr/worker",
     "lint": "npm run lint --workspaces --if-present"
   },
   "engines": { "node": ">=20" }

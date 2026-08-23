@@ -2,6 +2,8 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  doublePrecision,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -73,6 +75,16 @@ export const resources = pgTable('resources', {
   cloudResourceUnique: uniqueIndex('resources_cloud_account_type_external_id_idx').on(table.cloudAccountId, table.type, table.externalId),
 }));
 
+export const resourceMetrics = pgTable('resource_metrics', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  resourceId: uuid('resource_id').notNull().references(() => resources.id, { onDelete: 'cascade' }),
+  metricName: varchar('metric_name', { length: 128 }).notNull(),
+  value: doublePrecision('value').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+}, (table) => ({
+  resourceMetricTimeIdx: index('resource_metrics_resource_metric_time_idx').on(table.resourceId, table.metricName, table.recordedAt),
+}));
+
 export const wasteFindings = pgTable('waste_findings', {
   id: uuid('id').defaultRandom().primaryKey(),
   resourceId: uuid('resource_id').notNull().references(() => resources.id, { onDelete: 'cascade' }),
@@ -83,7 +95,11 @@ export const wasteFindings = pgTable('waste_findings', {
   status: wasteFindingStatusEnum('status').default('detected').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  openFindingNaturalKey: uniqueIndex('waste_findings_open_natural_key_idx')
+    .on(table.resourceId, table.findingType)
+    .where(sql`${table.status} NOT IN ('completed', 'rolled_back', 'denied', 'expired')`),
+}));
 
 export const remediationActions = pgTable('remediation_actions', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -124,6 +140,7 @@ export const policies = pgTable('policies', {
 
 export type CloudAccount = typeof cloudAccounts.$inferSelect;
 export type Resource = typeof resources.$inferSelect;
+export type ResourceMetric = typeof resourceMetrics.$inferSelect;
 export type WasteFinding = typeof wasteFindings.$inferSelect;
 export type RemediationAction = typeof remediationActions.$inferSelect;
 export type AuditLogEntry = typeof auditLog.$inferSelect;

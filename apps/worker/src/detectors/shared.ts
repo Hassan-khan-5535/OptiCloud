@@ -1,0 +1,179 @@
+import { and, eq, notInArray } from 'drizzle-orm';
+import type { CloudMetricPoint, CloudMetricsProvider, MetricsResource } from '@cindr/cloud-adapters';
+import { auditLog, createDb, policies, resources, wasteFindings } from '@cindr/db';
+import { transitionWasteFinding, type AuditActor, type Db, type FindingStatus } from '@cindr/db';
+import { resourceMetrics } from '@cindr/db';
+
+export const OPEN_FINDING_STATUSES: FindingStatus[] = ['detected', 'proposed', 'approved', 'executing', 'failed'];
+
+export type DetectionConfig = {
+  unattachedVolumeDays: number;
+  idleLoadBalancerWindowDays: number;
+  underutilizedRdsWindowDays: number;
+  underutilizedRdsMaxAvgConnections: number;
+  underutilizedRdsMaxAvgCpuPercent: number;
+  schedule: string;
+  detectionIntervalMs: number;
+};
+
+export function detectionConfigFromEnv(env: NodeJS.ProcessEnv = process.env): DetectionConfig {
+  const numberFromEnv = (name: string, fallback: number) => {
+    const parsed = Number(env[name]);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  };
+  return {
+    unattachedVolumeDays: numberFromEnv('UNATTACHED_VOLUME_DAYS', 14),
+    idleLoadBalancerWindowDays: numberFromEnv('IDLE_LOAD_BALANCER_WINDOW_DAYS', 7),
+    underutilizedRdsWindowDays: numberFromEnv('UNDERUTILIZED_RDS_WINDOW_DAYS', 14),
+    underutilizedRdsMaxAvgConnections: numberFromEnv('UNDERUTILIZED_RDS_MAX_AVG_CONNECTIONS', 1),
+    underutilizedRdsMaxAvgCpuPercent: numberFromEnv('UNDERUTILIZED_RDS_MAX_AVG_CPU_PERCENT', 10),
+    schedule: env.DETECTION_SCHEDULE ?? '0 * * * *',
+    detectionIntervalMs: numberFromEnv('DETECTION_INTERVAL_MS', 60 * 60 * 1000),
+  };
+}
+
+export type DetectionFindingInput = {
+  resourceId: string;
+  findingType: string;
+  evidence: Record<string, unknown>;
+  estimatedMonthlySavingsCents: number;
+};
+
+export type DetectionStore = {
+  recordMetrics(points: CloudMetricPoint[]): Promise<void>;
+  upsertFinding(input: DetectionFindingInput): Promise<{ id: string; status: FindingStatus } | null>;
+  hasAutoApprovePolicy(resourceId: string, findingType: string): Promise<boolean>;
+  transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void>;
+};
+
+export class DrizzleDetectionStore implements DetectionStore {
+  constructor(private readonly db: Db) {}
+
+  async recordMetrics(points: CloudMetricPoint[]): Promise<void> {
+    if (points.length === 0) return;
+    await this.db.insert(resourceMetrics).values(points.map((point) => ({
+      resourceId: point.resourceId,
+      metricName: point.metricName,
+      value: point.value,
+      recordedAt: point.recordedAt,
+    })));
+  }
+
+  async upsertFinding(input: DetectionFindingInput): Promise<{ id: string; status: FindingStatus } | null> {
+    const inserted = await this.db.insert(wasteFindings).values({
+      resourceId: input.resourceId,
+      findingType: input.findingType,
+      evidence: input.evidence,
+      estimatedMonthlySavingsCents: input.estimatedMonthlySavingsCents,
+      status: 'detected',
+    }).onConflictDoNothing().returning({ id: wasteFindings.id, status: wasteFindings.status });
+    if (inserted[0]) return inserted[0];
+
+    const existing = await this.db.select({ id: wasteFindings.id, status: wasteFindings.status })
+      .from(wasteFindings)
+      .where(and(
+        eq(wasteFindings.resourceId, input.resourceId),
+        eq(wasteFindings.findingType, input.findingType),
+        notInArray(wasteFindings.status, ['completed', 'rolled_back', 'denied', 'expired']),
+      ))
+      .limit(1);
+    return existing[0] ?? null;
+  }
+
+  async hasAutoApprovePolicy(resourceId: string, findingType: string): Promise<boolean> {
+    const rows = await this.db.select({ rule: policies.rule })
+      .from(policies)
+      .innerJoin(resources, eq(resources.cloudAccountId, policies.cloudAccountId))
+      .where(and(eq(resources.id, resourceId), eq(policies.active, true)));
+    return rows.some(({ rule }) => rule.finding_type === findingType && rule.action === 'auto_approve');
+  }
+
+  async transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void> {
+    await transitionWasteFinding(this.db, input);
+  }
+}
+
+export function createDrizzleDetectionStore(): { store: DrizzleDetectionStore; pool: import('pg').Pool } {
+  const { db, pool } = createDb();
+  return { store: new DrizzleDetectionStore(db), pool };
+}
+
+export type DetectorContext = {
+  provider: CloudMetricsProvider;
+  store: DetectionStore;
+  config: DetectionConfig;
+  now?: () => Date;
+  actor?: AuditActor;
+};
+
+export type DetectorResult = {
+  detector: string;
+  scanned: number;
+  metricsStored: number;
+  findingsCreated: number;
+  findingsReused: number;
+  findingsProposed: number;
+  findingsAutoApproved: number;
+};
+
+export function emptyDetectorResult(detector: string): DetectorResult {
+  return { detector, scanned: 0, metricsStored: 0, findingsCreated: 0, findingsReused: 0, findingsProposed: 0, findingsAutoApproved: 0 };
+}
+
+export async function persistDetection(ctx: DetectorContext, input: DetectionFindingInput, result: DetectorResult): Promise<void> {
+  const finding = await ctx.store.upsertFinding(input);
+  if (!finding) return;
+  const wasCreated = finding.status === 'detected';
+  if (wasCreated) result.findingsCreated += 1;
+  else result.findingsReused += 1;
+  if (finding.status !== 'detected') return;
+
+  const actor = ctx.actor ?? 'system';
+  const autoApprove = await ctx.store.hasAutoApprovePolicy(input.resourceId, input.findingType);
+  await ctx.store.transitionFinding({
+    findingId: finding.id,
+    toStatus: 'proposed',
+    actor,
+    reason: `Detection threshold crossed for ${input.findingType}`,
+  });
+  result.findingsProposed += 1;
+  if (autoApprove) {
+    await ctx.store.transitionFinding({
+      findingId: finding.id,
+      toStatus: 'approved',
+      actor,
+      reason: `Matching active policy auto-approved ${input.findingType}`,
+    });
+    result.findingsAutoApproved += 1;
+  }
+}
+
+export function pointsForMetric(points: CloudMetricPoint[], metricName: string): CloudMetricPoint[] {
+  return points.filter((point) => point.metricName === metricName).sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime());
+}
+
+export function uniqueUtcDays(points: Array<Pick<CloudMetricPoint, 'recordedAt'>>): number {
+  return new Set(points.map((point) => point.recordedAt.toISOString().slice(0, 10))).size;
+}
+
+export function rollingWindowStart(now: Date, days: number): Date {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+export function average(values: number[]): number {
+  return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+/**
+ * Cost estimates are intentionally rough. Provider-reported monthly cost is
+ * preferred; metadata fallbacks are simple list-price approximations only and
+ * should be replaced with Cost Explorer data before financial decisions rely on them.
+ */
+export function roughMonthlySavingsCents(resource: MetricsResource, providerMonthlyCostCents: number): number {
+  if (providerMonthlyCostCents > 0) return Math.round(providerMonthlyCostCents);
+  const metadata = resource.metadata ?? {};
+  if (resource.resourceType === 'ebs_volume') return Math.round(Number(metadata.sizeGiB ?? 0) * 8);
+  if (resource.resourceType === 'load_balancer') return 2000;
+  if (resource.resourceType === 'rds_instance') return 5000;
+  return 0;
+}

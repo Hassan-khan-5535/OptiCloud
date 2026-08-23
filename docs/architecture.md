@@ -96,3 +96,21 @@ A `remediation_actions` row describes the provider-side operation associated wit
 ## Stage 2 seed data
 
 Run `npm run migrate --workspace @cindr/db` with a reachable `DATABASE_URL`, then run `npm run seed --workspace @cindr/db`. The idempotent fixture creates one fake AWS account, three fake resources (EBS, RDS, and EC2), and two findings. One finding ends in `proposed`; the other follows the audited approval path and ends in `approved`. The fixture uses fake identifiers and a `secrets://` credentials reference only; it never stores raw cloud credentials.
+
+## Stage 3 waste detection engine
+
+Stage 3 keeps detection logic independent from provider SDK details. `packages/cloud-adapters/src/metrics.ts` defines `CloudMetricsProvider`, `AwsMetricsApi`, and `MockCloudMetricsProvider`. Detectors consume only `listResources`, `collectMetrics`, and `estimateMonthlySavings`; the AWS-shaped seam can later call CloudWatch and Cost Explorer without changing detector predicates.
+
+The worker runs exactly three MVP detectors: `unattached_volume`, `idle_load_balancer`, and `underutilized_rds`. The first requires zero `volume_attachment_count` across at least the configured number of UTC days, defaulting to 14. The second requires zero `load_balancer_request_count` across at least the configured seven-day window. The third requires both `rds_connection_count` and `rds_cpu_percent` to have complete configured-window coverage, defaulting to 14 days, with averages at or below configurable thresholds of one connection and ten percent CPU. Equality at a configured boundary counts as a detection; one day less coverage or a value above a configured threshold does not.
+
+All raw points are written to `resource_metrics`. Migration `0002_strange_romulus.sql` creates the table, its foreign key/index, and calls `create_hypertable('resource_metrics', 'recorded_at', if_not_exists => TRUE)` after enabling TimescaleDB. The detection store inserts the raw points before evaluating the finding.
+
+Findings use the partial unique natural key `(resource_id, finding_type)` for non-terminal statuses. The store uses `ON CONFLICT DO NOTHING` and then re-reads the existing open finding, so repeated hourly scans do not create duplicate waste. A newly inserted finding starts at `detected` and is immediately transitioned to `proposed`; when an active matching policy has `rule.action = 'auto_approve'`, it is then transitioned through `approved`. Both transitions are recorded through the Stage 2 transactional state machine. Slack delivery is intentionally not part of this stage.
+
+The cost model prefers a provider-reported monthly cost. Until Cost Explorer is connected, fallbacks are rough approximations: EBS uses a simple per-GB-month estimate, load balancers use a coarse fixed estimate, RDS uses a coarse fixed estimate, and unsupported resources produce zero. These values are directional signals for review, not billing-grade precision.
+
+The worker registers a BullMQ job scheduler named `cindr-detection-scheduler` using `DETECTION_SCHEDULE`, defaulting to `0 * * * *` (hourly). It invokes the three detectors sequentially to keep provider pressure predictable; provider-specific rate limiting and retries remain adapter responsibilities for the next stage.
+
+## Stage 3 test strategy
+
+Detector tests use mocked cloud metrics and an in-memory persistence boundary. They cover exact threshold boundaries and just-under-threshold cases for all three detectors, inclusive RDS metric limits, policy-driven `detected -> proposed -> approved`, and repeat-run deduplication. For money and infrastructure, good coverage must also include malformed/partial metric windows, missing provider data, cost-model fallback behavior, concurrent duplicate scans, retry/idempotency behavior, policy scope, and database transaction rollback. The current suite proves the core predicate and lifecycle contract without pretending that in-memory tests replace integration tests against PostgreSQL/TimescaleDB and provider sandboxes.

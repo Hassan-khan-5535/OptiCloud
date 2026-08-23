@@ -10,3 +10,4 @@ export interface CloudProvider {
 }
 
 export { AwsCloudProvider } from './aws.js';
+export * from './metrics.js';

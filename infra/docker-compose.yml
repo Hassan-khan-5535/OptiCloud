@@ -64,6 +64,7 @@ services:
       dockerfile: apps/web/Dockerfile
     container_name: cindr-web
     environment:
+      API_URL: ${API_URL:-http://api:4000}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
     ports:
       - "${WEB_PORT:-3000}:3000"

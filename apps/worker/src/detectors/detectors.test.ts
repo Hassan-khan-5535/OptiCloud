@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MockCloudMetricsProvider, type CloudMetricPoint, type MetricsResource } from '@cindr/cloud-adapters';
 import type { DetectionFindingInput, DetectionStore, DetectorContext } from './shared.js';
+import type { PolicyEvaluation } from './policy-engine.js';
 import { detectionConfigFromEnv } from './shared.js';
 import { detectIdleLoadBalancers } from './idle-load-balancer.js';
 import { detectUnderutilizedRds } from './underutilized-rds.js';
@@ -16,6 +17,9 @@ class MemoryDetectionStore implements DetectionStore {
   public readonly findings = new Map<string, { id: string; status: FindingStatus; findingType: string }>();
   public readonly transitions: Array<{ id: string; from: FindingStatus; to: FindingStatus }> = [];
   public autoApprove = new Set<string>();
+  public dryRun = new Set<string>();
+  public approvalReason = '';
+  public dryRunLog: PolicyEvaluation[] = [];
 
   async recordMetrics(points: CloudMetricPoint[]): Promise<void> { this.metrics.push(...points); }
 
@@ -28,12 +32,22 @@ class MemoryDetectionStore implements DetectionStore {
     return finding;
   }
 
-  async hasAutoApprovePolicy(_resourceId: string, findingType: string): Promise<boolean> { return this.autoApprove.has(findingType); }
+  async evaluatePolicies(input: { findingType: string; resourceId: string; findingId: string; evidence: Record<string, unknown>; estimatedMonthlySavingsCents: number }): Promise<PolicyEvaluation[]> {
+    const evaluations: PolicyEvaluation[] = [];
+    if (this.autoApprove.has(input.findingType)) evaluations.push({ policyId: 'test-policy', policyName: 'test auto-approve', mode: 'live', action: 'auto_approve', actionType: 'delete_volume', matched: true, safe: true, eligibleForApproval: true, reason: 'test', conditions: [] });
+    if (this.dryRun.has(input.findingType)) {
+      const evaluation = { policyId: 'dry-run-policy', policyName: 'test dry run', mode: 'dry_run' as const, action: 'auto_approve', actionType: 'delete_volume', matched: true, safe: true, eligibleForApproval: false, reason: 'Dry-run would auto-approve', conditions: [] };
+      evaluations.push(evaluation);
+      this.dryRunLog.push(evaluation);
+    }
+    return evaluations;
+  }
 
   async transitionFinding(input: { findingId: string; toStatus: FindingStatus; reason: string }): Promise<void> {
     const finding = [...this.findings.values()].find((candidate) => candidate.id === input.findingId);
     assert.ok(finding);
     this.transitions.push({ id: input.findingId, from: finding.status, to: input.toStatus });
+    if (input.toStatus === 'approved') this.approvalReason = input.reason;
     finding.status = input.toStatus;
   }
 }
@@ -116,6 +130,19 @@ test('matching auto_approve policy advances detected findings through proposed t
   const result = await detectUnattachedVolumes(ctx);
   assert.equal(result.findingsAutoApproved, 1);
   assert.deepEqual(store.transitions.map((transition) => transition.to), ['proposed', 'approved']);
+  assert.match(store.approvalReason ?? '', /test-policy/);
+  assert.match(store.approvalReason ?? '', /matched conditions=/);
+});
+
+test('matching dry-run policy is evaluated and logged without approval', async () => {
+  const resource = { resourceId: 'volume-dry-run', resourceType: 'ebs_volume', externalId: 'vol-dry-run', region: 'us-east-1' } as const;
+  const store = new MemoryDetectionStore();
+  store.dryRun.add('unattached_volume');
+  const result = await detectUnattachedVolumes(context([resource], points(resource.resourceId, 'volume_attachment_count', 14, 0), store));
+  assert.equal(result.findingsAutoApproved, 0);
+  assert.deepEqual(store.transitions.map((transition) => transition.to), ['proposed']);
+  assert.equal(store.dryRunLog[0]?.mode, 'dry_run');
+  assert.equal(store.dryRunLog[0]?.eligibleForApproval, false);
 });
 
 test('rerunning the same detector reuses the open natural-key finding', async () => {

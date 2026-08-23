@@ -29,7 +29,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <div className="mt-auto border-t border-slate-800/80 p-5">
           <div className="flex items-center gap-2 text-xs text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />All systems nominal</div>
-          <p className="mt-2 text-[11px] leading-5 text-slate-600">Single-tenant workspace<br />Stage 6 · dashboard preview</p>
+          <p className="mt-2 text-[11px] leading-5 text-slate-600">Single-tenant workspace<br />Stage 7 · policy engine hardening</p>
         </div>
       </aside>
 

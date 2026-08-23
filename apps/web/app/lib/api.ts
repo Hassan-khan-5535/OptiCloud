@@ -56,9 +56,11 @@ export type Policy = {
   rule: Record<string, unknown>;
   createdBy: string;
   active: boolean;
+  mode: 'live' | 'dry_run';
   createdAt: string | null;
   updatedAt: string | null;
   account: { id: string; provider: string; externalId: string };
+  dryRunMatches: Array<{ id: string; findingId: string; matched: boolean; safe: boolean; conditionResults: unknown; createdAt: string | null }>;
 };
 
 export type Account = {

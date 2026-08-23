@@ -2,6 +2,8 @@ import type { CloudRemediationProvider, RemediationResource, RollbackInstruction
 import type { AuditActor, FindingStatus, RemediationActionStatus } from '@cindr/db';
 import type { ExecutionRecord, DrizzleRemediationRepository } from './repository.js';
 import type { ProviderRateLimiter } from './rate-limiter.js';
+import { actionPlanForFinding, type ActionPlan } from './action-plan.js';
+export { actionPlanForFinding } from './action-plan.js';
 
 export type RemediationJob = { kind: 'remediation'; findingId: string; attempt?: number };
 export type RollbackJob = { kind: 'rollback'; remediationActionId: string };
@@ -9,12 +11,6 @@ export type RollbackJob = { kind: 'rollback'; remediationActionId: string };
 export type RemediationRepository = Pick<DrizzleRemediationRepository,
   'getExecutionRecord' | 'ensureAction' | 'setRollbackAction' | 'transitionFinding' | 'transitionAction' | 'recordActionNote'> & {
   getExecutionRecordByActionId?(actionId: string): Promise<ExecutionRecord | null>;
-};
-
-export type ActionPlan = {
-  actionType: NonNullable<ExecutionRecord['actionType']>;
-  isReversible: boolean;
-  manualReview?: string;
 };
 
 export type RemediationEngine = {
@@ -37,22 +33,6 @@ function parseRollbackInstruction(input: Record<string, unknown>): RollbackInstr
     throw new Error('RDS rollback requires the previous instance type');
   }
   return input as unknown as RollbackInstruction;
-}
-
-export function actionPlanForFinding(record: Pick<ExecutionRecord, 'findingType' | 'resource'>, providerSupportsStoppedLoadBalancer = true): ActionPlan {
-  if (record.findingType === 'unattached_volume') {
-    return { actionType: 'delete_volume', isReversible: true };
-  }
-  if (record.findingType === 'idle_load_balancer') {
-    return providerSupportsStoppedLoadBalancer
-      ? { actionType: 'stop_load_balancer', isReversible: true }
-      : { actionType: 'stop_load_balancer', isReversible: true, manualReview: 'Provider does not support a stopped load-balancer state; manual review required instead of deletion.' };
-  }
-  if (record.findingType === 'underutilized_rds') {
-    // RDS receives gentler treatment than EBS: resizing is reversible and preserves data, while stopping/deleting risks availability and stateful data loss.
-    return { actionType: 'resize_instance', isReversible: true };
-  }
-  throw new Error(`Unsupported waste finding type: ${record.findingType}`);
 }
 
 const resizeTiers: Record<string, string> = {

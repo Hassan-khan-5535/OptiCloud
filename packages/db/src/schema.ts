@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { PolicyRule } from './policy.js';
 import {
   boolean,
   check,
@@ -51,6 +52,7 @@ export const auditEntityTypeEnum = pgEnum('audit_entity_type', [
   'waste_finding',
   'remediation_action',
 ]);
+export const policyEvaluationModeEnum = pgEnum('policy_evaluation_mode', ['live', 'dry_run']);
 
 export const cloudAccounts = pgTable('cloud_accounts', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -132,12 +134,25 @@ export const auditLog = pgTable('audit_log', {
 export const policies = pgTable('policies', {
   id: uuid('id').defaultRandom().primaryKey(),
   cloudAccountId: uuid('cloud_account_id').notNull().references(() => cloudAccounts.id, { onDelete: 'cascade' }),
-  rule: jsonb('rule').$type<Record<string, unknown>>().notNull(),
+  rule: jsonb('rule').$type<PolicyRule>().notNull(),
   createdBy: varchar('created_by', { length: 255 }).notNull(),
   active: boolean('active').default(true).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const policyEvaluations = pgTable('policy_evaluations', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  policyId: uuid('policy_id').notNull().references(() => policies.id, { onDelete: 'cascade' }),
+  wasteFindingId: uuid('waste_finding_id').notNull().references(() => wasteFindings.id, { onDelete: 'cascade' }),
+  mode: policyEvaluationModeEnum('mode').notNull(),
+  matched: boolean('matched').notNull(),
+  safe: boolean('safe').notNull(),
+  conditionResults: jsonb('condition_results').$type<Array<Record<string, unknown>>>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  policyFindingCreatedIdx: index('policy_evaluations_policy_finding_created_idx').on(table.policyId, table.wasteFindingId, table.createdAt),
+}));
 
 export type CloudAccount = typeof cloudAccounts.$inferSelect;
 export type Resource = typeof resources.$inferSelect;
@@ -146,3 +161,4 @@ export type WasteFinding = typeof wasteFindings.$inferSelect;
 export type RemediationAction = typeof remediationActions.$inferSelect;
 export type AuditLogEntry = typeof auditLog.$inferSelect;
 export type Policy = typeof policies.$inferSelect;
+export type PolicyEvaluation = typeof policyEvaluations.$inferSelect;

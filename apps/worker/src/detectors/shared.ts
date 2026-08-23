@@ -1,8 +1,9 @@
 import { and, eq, notInArray } from 'drizzle-orm';
 import type { CloudMetricPoint, CloudMetricsProvider, MetricsResource } from '@cindr/cloud-adapters';
-import { auditLog, createDb, policies, resources, wasteFindings } from '@cindr/db';
+import { auditLog, createDb, policies, policyEvaluations, resources, wasteFindings } from '@cindr/db';
 import { transitionWasteFinding, type AuditActor, type Db, type FindingStatus } from '@cindr/db';
 import { resourceMetrics } from '@cindr/db';
+import { evaluatePolicy, type PolicyEvaluation, type PolicyEvaluationContext } from './policy-engine.js';
 
 export const OPEN_FINDING_STATUSES: FindingStatus[] = ['detected', 'proposed', 'approved', 'executing', 'failed'];
 
@@ -42,7 +43,7 @@ export type DetectionFindingInput = {
 export type DetectionStore = {
   recordMetrics(points: CloudMetricPoint[]): Promise<void>;
   upsertFinding(input: DetectionFindingInput): Promise<{ id: string; status: FindingStatus } | null>;
-  hasAutoApprovePolicy(resourceId: string, findingType: string): Promise<boolean>;
+  evaluatePolicies(input: PolicyEvaluationContext & { resourceId: string; findingId: string }): Promise<PolicyEvaluation[]>;
   transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void>;
 };
 
@@ -80,12 +81,33 @@ export class DrizzleDetectionStore implements DetectionStore {
     return existing[0] ?? null;
   }
 
-  async hasAutoApprovePolicy(resourceId: string, findingType: string): Promise<boolean> {
-    const rows = await this.db.select({ rule: policies.rule })
+  async evaluatePolicies(input: PolicyEvaluationContext & { resourceId: string; findingId: string }): Promise<PolicyEvaluation[]> {
+    const rows = await this.db.select({ id: policies.id, active: policies.active, rule: policies.rule })
       .from(policies)
       .innerJoin(resources, eq(resources.cloudAccountId, policies.cloudAccountId))
-      .where(and(eq(resources.id, resourceId), eq(policies.active, true)));
-    return rows.some(({ rule }) => rule.finding_type === findingType && rule.action === 'auto_approve');
+      .where(eq(resources.id, input.resourceId));
+    const evaluations = rows.map((policy) => evaluatePolicy(policy, input));
+    for (const evaluation of evaluations) {
+      await this.db.insert(policyEvaluations).values({
+        policyId: evaluation.policyId,
+        wasteFindingId: input.findingId,
+        mode: evaluation.mode,
+        matched: evaluation.matched,
+        safe: evaluation.safe,
+        conditionResults: evaluation.conditions,
+      });
+      if (evaluation.mode === 'dry_run' && evaluation.matched) {
+        await this.db.insert(auditLog).values({
+          entityType: 'waste_finding',
+          entityId: input.findingId,
+          fromStatus: null,
+          toStatus: 'detected',
+          actor: 'system',
+          reason: `Dry-run policy ${evaluation.policyId} (${evaluation.policyName}) would ${evaluation.action}; evaluation=${JSON.stringify(evaluation)}`,
+        });
+      }
+    }
+    return evaluations;
   }
 
   async transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void> {
@@ -126,10 +148,16 @@ export async function persistDetection(ctx: DetectorContext, input: DetectionFin
   const wasCreated = finding.status === 'detected';
   if (wasCreated) result.findingsCreated += 1;
   else result.findingsReused += 1;
-  if (finding.status !== 'detected') return;
-
   const actor = ctx.actor ?? 'system';
-  const autoApprove = await ctx.store.hasAutoApprovePolicy(input.resourceId, input.findingType);
+  const evaluations = await ctx.store.evaluatePolicies({
+    resourceId: input.resourceId,
+    findingId: finding.id,
+    findingType: input.findingType,
+    evidence: input.evidence,
+    estimatedMonthlySavingsCents: input.estimatedMonthlySavingsCents,
+  });
+  const approvedBy = evaluations.find((evaluation) => evaluation.eligibleForApproval);
+  if (finding.status !== 'detected') return;
   await ctx.store.transitionFinding({
     findingId: finding.id,
     toStatus: 'proposed',
@@ -137,12 +165,12 @@ export async function persistDetection(ctx: DetectorContext, input: DetectionFin
     reason: `Detection threshold crossed for ${input.findingType}`,
   });
   result.findingsProposed += 1;
-  if (autoApprove) {
+  if (approvedBy) {
     await ctx.store.transitionFinding({
       findingId: finding.id,
       toStatus: 'approved',
       actor,
-      reason: `Matching active policy auto-approved ${input.findingType}`,
+      reason: `Policy ${approvedBy.policyId} (${approvedBy.policyName}) auto-approved ${input.findingType}; matched conditions=${JSON.stringify(approvedBy.conditions)}`,
     });
     result.findingsAutoApproved += 1;
   }

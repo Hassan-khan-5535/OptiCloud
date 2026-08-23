@@ -1,0 +1,1 @@
+ALTER TABLE "audit_log" ADD CONSTRAINT "audit_log_actor_format_chk" CHECK ("audit_log"."actor" = 'system' OR "audit_log"."actor" LIKE 'slack_user_id:%');

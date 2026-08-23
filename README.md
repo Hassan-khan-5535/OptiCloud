@@ -2,11 +2,11 @@
 
 > **Catch the waste before it burns.**
 
-Cindr is an automated FinOps and remediation platform for finding cloud waste, routing safe fixes through Slack approval, executing changes through provider adapters, and preserving a complete audit trail. This repository is the Stage 1 Cindr monorepo.
+Cindr is an automated FinOps and remediation platform for finding cloud waste, routing safe fixes through Slack approval, executing changes through provider adapters, and preserving a complete audit trail. This repository is the Cindr monorepo; Stage 1 established the service plumbing and Stage 2 adds the persistence model and approval/remediation state machine.
 
-## Stage 1 scope
+## Current scope
 
-The initial Cindr stage is architecture and plumbing only. It includes a Fastify health-check API, a Next.js dashboard scaffold, a BullMQ no-op worker, Drizzle/PostgreSQL schema scaffolding, an AWS-first cloud adapter interface, Slack Block Kit builders, Docker Compose, Kubernetes base manifests, and architecture documentation. Detection and remediation logic are explicitly out of scope.
+Stage 1 established a Fastify health-check API, Next.js dashboard scaffold, BullMQ no-op worker, AWS-first cloud adapter interface, Slack Block Kit builders, Docker Compose, Kubernetes base manifests, and architecture documentation. Stage 2 adds the Drizzle/PostgreSQL schema, generated SQL migrations, append-only audit protection, idempotent seed fixture, and guarded approval/remediation state machines. Detection, anomaly scoring, provider-side remediation execution, and rollback execution remain out of scope.
 
 ## Local development with Docker Compose
 
@@ -19,7 +19,7 @@ docker compose -f infra/docker-compose.yml up --build
 
 The local services are exposed at the following addresses:
 
-| Service | Address | Stage 1 check |
+| Service | Address | Local check |
 | --- | --- | --- |
 | API | http://localhost:4000 | `curl http://localhost:4000/health` |
 | Web | http://localhost:3000 | Open in a browser |
@@ -39,11 +39,15 @@ npm run dev:web
 REDIS_URL=redis://localhost:6380 npm run dev:worker
 ```
 
-The API requires a reachable PostgreSQL and Redis instance only when later persistence and job workflows are enabled; the Stage 1 health endpoint itself does not query them. Run validation with:
+The API health endpoint does not query PostgreSQL or Redis, but migration and seed commands require a reachable PostgreSQL instance. Run validation with:
 
 ```bash
 npm run typecheck
 npm run build
+
+# With PostgreSQL available and DATABASE_URL set:
+npm run migrate --workspace @cindr/db
+npm run seed --workspace @cindr/db
 ```
 
 ## Kubernetes manifests

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Service
+metadata: { name: cindr-web }
+spec:
+  selector: { app: cindr-web }
+  ports: [{ port: 3000, targetPort: 3000 }]
+  type: ClusterIP

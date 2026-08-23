@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: cindr-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cindr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cindr-local}
+      POSTGRES_DB: ${POSTGRES_DB:-cindr}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - cindr_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cindr} -d ${POSTGRES_DB:-cindr}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cindr-redis
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - cindr_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    container_name: cindr-api
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cindr}:${POSTGRES_PASSWORD:-cindr-local}@postgres:5432/${POSTGRES_DB:-cindr}
+      REDIS_URL: redis://redis:6379
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    ports:
+      - "${API_PORT:-4000}:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/worker/Dockerfile
+    container_name: cindr-worker
+    environment:
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    container_name: cindr-web
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  cindr_postgres_data:
+  cindr_redis_data:

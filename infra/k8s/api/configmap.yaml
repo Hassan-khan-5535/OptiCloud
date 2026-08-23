@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: cindr-api-config }
+data:
+  PORT: "4000"
+  REDIS_URL: redis://cindr-redis:6379
+  DATABASE_URL: postgresql://cindr:cindr@cindr-postgres:5432/cindr
+  AWS_REGION: us-east-1

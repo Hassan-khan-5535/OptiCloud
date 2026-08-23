@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cindr-worker, labels: { app: cindr-worker } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cindr-worker } }
+  template:
+    metadata: { labels: { app: cindr-worker } }
+    spec:
+      containers:
+        - name: worker
+          image: cindr/worker:latest
+          envFrom: [{ configMapRef: { name: cindr-worker-config } }]

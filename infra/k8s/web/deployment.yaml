@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cindr-web, labels: { app: cindr-web } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cindr-web } }
+  template:
+    metadata: { labels: { app: cindr-web } }
+    spec:
+      containers:
+        - name: web
+          image: cindr/web:latest
+          ports: [{ containerPort: 3000 }]
+          envFrom: [{ configMapRef: { name: cindr-web-config } }]

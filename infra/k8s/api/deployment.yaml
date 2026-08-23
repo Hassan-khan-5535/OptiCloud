@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cindr-api, labels: { app: cindr-api } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cindr-api } }
+  template:
+    metadata: { labels: { app: cindr-api } }
+    spec:
+      containers:
+        - name: api
+          image: cindr/api:latest
+          ports: [{ containerPort: 4000 }]
+          envFrom: [{ configMapRef: { name: cindr-api-config } }]
+          readinessProbe: { httpGet: { path: /health, port: 4000 }, initialDelaySeconds: 5 }

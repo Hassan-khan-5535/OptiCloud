@@ -1,0 +1,44 @@
+{
+  "text": "Cindr approval required: arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cindr-demo/123 could save $45.00/month.",
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Cindr approval required*"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Resource:* `arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cindr-demo/123`  •  *Type:* `load_balancer`  •  *Region:* `us-east-1`\n*Evidence:* 0 requests over 7 days\nCurrent monthly cost: *$100.00/month*. Projected monthly savings: *$45.00/month*."
+      }
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Approve"
+          },
+          "style": "primary",
+          "action_id": "cindr_approve",
+          "value": "{\"findingId\":\"finding-123\",\"actionId\":\"cindr:approve:finding-123\"}"
+        },
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Deny"
+          },
+          "style": "danger",
+          "action_id": "cindr_deny",
+          "value": "{\"findingId\":\"finding-123\",\"actionId\":\"cindr:deny:finding-123\"}"
+        }
+      ]
+    }
+  ]
+}

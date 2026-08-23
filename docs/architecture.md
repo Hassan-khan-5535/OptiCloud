@@ -114,3 +114,22 @@ The worker registers a BullMQ job scheduler named `cindr-detection-scheduler` us
 ## Stage 3 test strategy
 
 Detector tests use mocked cloud metrics and an in-memory persistence boundary. They cover exact threshold boundaries and just-under-threshold cases for all three detectors, inclusive RDS metric limits, policy-driven `detected -> proposed -> approved`, and repeat-run deduplication. For money and infrastructure, good coverage must also include malformed/partial metric windows, missing provider data, cost-model fallback behavior, concurrent duplicate scans, retry/idempotency behavior, policy scope, and database transaction rollback. The current suite proves the core predicate and lifecycle contract without pretending that in-memory tests replace integration tests against PostgreSQL/TimescaleDB and provider sandboxes.
+
+## Stage 4 Slack interactive approval workflow
+
+`packages/slack/src/messages.ts` builds the approval payload from a waste finding, its resource, evidence, current monthly cost, and projected monthly savings. Proposed findings show the resource identifier, resource type, region, evidence, plain cost comparison, and Approve/Deny buttons. Each button carries a JSON `value` containing the finding ID and a deterministic action ID such as `cindr:approve:<finding-id>`.
+
+`apps/api/src/slack-interactions.ts` verifies Slack’s `v0` HMAC signature over the exact raw request body and rejects timestamps outside a five-minute window. Signature verification matters because an unsigned or replayable request could let an attacker forge approval decisions for production infrastructure. Only a finding currently in `proposed` can be acted on. Approve transitions it to `approved`, enqueues one deterministic BullMQ remediation job, and updates the original Slack message using `chat.update`; Deny transitions it to `denied` and updates the same original message. A second delivery or double-click sees a non-proposed finding and is rejected before another transition or job enqueue.
+
+The notification route `POST /slack/findings/:findingId/notify` posts a finding to the configured channel. Approved findings render without live buttons and can include `Auto-approved by policy: <policy name>`. This gives Stage 3 auto-approved findings a Slack record while preserving the Stage 2 audit trail. Stage 5 will provide the actual remediation worker behavior.
+
+## Slack configuration checklist
+
+Before enabling the integration, create or configure a Slack app and complete the following items:
+
+- Set `SLACK_BOT_TOKEN` to the bot token and `SLACK_SIGNING_SECRET` to the signing secret. The signing secret must be kept server-side and never committed.
+- Add the bot OAuth scopes required for the chosen delivery channel, at minimum the ability to post messages and update messages in that channel. If the bot will resolve messages in private channels, grant the corresponding private-channel history/access scope required by the Slack app configuration.
+- Install or reinstall the app to the target workspace after changing scopes, then set `SLACK_CHANNEL_ID` to the destination channel ID.
+- Configure the Interactivity & Shortcuts Request URL as `https://<public-api-host>/slack/interactions`. The endpoint must receive the raw URL-encoded body so signature verification covers the exact bytes Slack signed.
+- Ensure the API is reachable over HTTPS from Slack and that the deployment forwards `x-slack-request-timestamp` and `x-slack-signature` unchanged.
+- For Stage 5, add the remediation worker’s queue permissions and the Slack app configuration needed for any later status callbacks. No Slack event subscription is required for button clicks in this stage; Interactivity must be enabled.

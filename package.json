@@ -5,12 +5,12 @@
   "description": "Cindr FinOps and remediation platform monorepo",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace @cindr/cloud-adapters && npm run build --workspace @cindr/db && npm run build --workspace @cindr/slack && npm run build --workspace @cindr/api && npm run build --workspace @cindr/web && npm run build --workspace @cindr/worker",
     "dev:api": "npm --workspace @cindr/api run dev",
     "dev:web": "npm --workspace @cindr/web run dev",
     "dev:worker": "npm --workspace @cindr/worker run dev",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm test --workspace @cindr/worker",
+    "typecheck": "npm run build --workspace @cindr/cloud-adapters && npm run build --workspace @cindr/db && npm run build --workspace @cindr/slack && npm run typecheck --workspace @cindr/api && npm run typecheck --workspace @cindr/web && npm run typecheck --workspace @cindr/worker",
+    "test": "npm test --workspace @cindr/worker && npm test --workspace @cindr/slack && npm test --workspace @cindr/api",
     "lint": "npm run lint --workspaces --if-present"
   },
   "engines": { "node": ">=20" }

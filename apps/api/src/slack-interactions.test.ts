@@ -28,7 +28,7 @@ function makeFinding(status: FindingContext['status'] = 'proposed'): FindingCont
   };
 }
 
-test('duplicate signed Approve delivery transitions and enqueues exactly once', async () => {
+test('duplicate signed Approve delivery re-enqueues safely without re-transitioning', async () => {
   let finding = makeFinding();
   let transitions = 0;
   const repository: ApprovalRepository = {
@@ -55,13 +55,33 @@ test('duplicate signed Approve delivery transitions and enqueues exactly once', 
   const first = await handleSlackInteraction(request.rawBody, request.headers, body, deps);
   assert.deepEqual(first, { status: 'approved', duplicate: false });
 
-  await assert.rejects(
-    () => handleSlackInteraction(request.rawBody, request.headers, body, deps),
-    (error: unknown) => error instanceof SlackRequestError && error.statusCode === 409,
-  );
+  const duplicate = await handleSlackInteraction(request.rawBody, request.headers, body, deps);
+  assert.deepEqual(duplicate, { status: 'approved', duplicate: true });
   assert.equal(transitions, 1);
-  assert.equal(enqueues, 1);
-  assert.equal(updates, 1);
+  assert.equal(enqueues, 2);
+  assert.equal(updates, 2);
+});
+
+test('malformed Slack action value is rejected before repository access', async () => {
+  let repositoryCalls = 0;
+  const repository: ApprovalRepository = {
+    async getFindingContext() { repositoryCalls += 1; return makeFinding(); },
+    async transitionFinding() { throw new Error('should not be called'); },
+  };
+  const body = { type: 'block_actions', actions: [{ action_id: 'cindr_approve', value: '{bad-json' }], message: { channel: 'C123', ts: '1712345678.000100' } };
+  const request = signedRequest(body);
+  await assert.rejects(
+    () => handleSlackInteraction(request.rawBody, request.headers, body, {
+      repository,
+      queue: { async enqueue() {}, async enqueueRollback() {} },
+      slack: { chat: { async update() {} } },
+      signingSecret,
+      orgId: 'org-test',
+      nowSeconds: timestamp,
+    }),
+    (error: unknown) => error instanceof SlackRequestError && error.statusCode === 400,
+  );
+  assert.equal(repositoryCalls, 0);
 });
 
 test('invalid Slack signature is rejected before repository access', async () => {

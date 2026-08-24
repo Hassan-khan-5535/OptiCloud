@@ -7,9 +7,18 @@ spec:
   template:
     metadata: { labels: { app: cindr-worker } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: worker
-          image: cindr/worker:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          image: ghcr.io/atifkhani397/cindr-worker:latest
           envFrom:
             - configMapRef: { name: cindr-worker-config }
           env:

@@ -9,7 +9,7 @@ export type RemediationJob = { kind: 'remediation'; findingId: string; attempt?:
 export type RollbackJob = { kind: 'rollback'; remediationActionId: string };
 
 export type RemediationRepository = Pick<DrizzleRemediationRepository,
-  'getExecutionRecord' | 'ensureAction' | 'setRollbackAction' | 'transitionFinding' | 'transitionAction' | 'recordActionNote'> & {
+  'getExecutionRecord' | 'ensureAction' | 'setRollbackAction' | 'transitionFinding' | 'transitionAction' | 'recordActionNote' | 'updateResourceExternalId'> & {
   getExecutionRecordByActionId?(actionId: string): Promise<ExecutionRecord | null>;
 };
 
@@ -108,6 +108,10 @@ export class DefaultRemediationEngine implements RemediationEngine {
   private async executeAction(actionType: NonNullable<ExecutionRecord['actionType']>, record: ExecutionRecord, actionId: string) {
     switch (actionType) {
       case 'delete_volume': {
+        const availabilityZone = typeof record.resource.metadata?.availabilityZone === 'string'
+          ? record.resource.metadata.availabilityZone
+          : undefined;
+        if (!availabilityZone) throw new Error('EBS deletion requires availabilityZone metadata for safe rollback');
         let snapshotId = typeof record.rollbackAction?.snapshotId === 'string' ? record.rollbackAction.snapshotId : undefined;
         if (!snapshotId) {
           const snapshot = await this.rateLimiter.run(record.resource.cloudAccountId, record.resource.provider, () => this.provider.createVolumeSnapshot(record.resource));
@@ -118,7 +122,7 @@ export class DefaultRemediationEngine implements RemediationEngine {
             actionType: 'restore_volume_snapshot',
             resourceExternalId: record.resource.externalId,
             region: record.resource.region,
-            availabilityZone: typeof record.resource.metadata?.availabilityZone === 'string' ? record.resource.metadata.availabilityZone : undefined,
+            availabilityZone,
             snapshotId,
           });
         }
@@ -140,6 +144,9 @@ export class DefaultRemediationEngine implements RemediationEngine {
       case 'resize_instance': {
         const target = resizeDownOneTier(String(record.resource.metadata?.instanceType ?? ''));
         const result = await this.rateLimiter.run(record.resource.cloudAccountId, record.resource.provider, () => this.provider.resizeInstance(record.resource, target));
+        if (this.provider.waitForInstanceReady) {
+          await this.rateLimiter.run(record.resource.cloudAccountId, record.resource.provider, () => this.provider.waitForInstanceReady!(record.resource, target));
+        }
         await this.repository.setRollbackAction(actionId, {
           cloudAccountId: record.resource.cloudAccountId,
           provider: record.resource.provider,
@@ -177,7 +184,10 @@ export class DefaultRemediationEngine implements RemediationEngine {
 
     try {
       const rollback = parseRollbackInstruction(record.rollbackAction);
-      await this.rateLimiter.run(record.resource.cloudAccountId, record.resource.provider, () => this.runRollback(rollback));
+      const rollbackResult = await this.rateLimiter.run(record.resource.cloudAccountId, record.resource.provider, () => this.runRollback(rollback, record.resource));
+      if (rollbackResult.replacementResourceExternalId && rollbackResult.replacementResourceExternalId !== record.resource.externalId) {
+        await this.repository.updateResourceExternalId(record.resource.resourceId, rollbackResult.replacementResourceExternalId);
+      }
       await this.repository.transitionAction({ actionId: remediationActionId, toStatus: 'rolled_back', actor, reason: 'Rollback completed successfully' });
       await this.repository.transitionFinding({ findingId: record.findingId, toStatus: 'rolled_back', actor, reason: 'Remediation rollback completed successfully' });
       return { status: 'rolled_back' };
@@ -188,10 +198,22 @@ export class DefaultRemediationEngine implements RemediationEngine {
     }
   }
 
-  private async runRollback(instruction: RollbackInstruction): Promise<void> {
-    if (instruction.actionType === 'restore_volume_snapshot') return this.provider.restoreVolumeSnapshot(instruction);
-    if (instruction.actionType === 'start_load_balancer') return this.provider.startLoadBalancer(instruction);
-    if (instruction.actionType === 'resize_instance') return this.provider.resizeInstanceBack(instruction);
+  private async runRollback(instruction: RollbackInstruction, resource: ExecutionRecord['resource']): Promise<{ replacementResourceExternalId?: string }> {
+    if (instruction.actionType === 'restore_volume_snapshot') {
+      const restored = await this.provider.restoreVolumeSnapshot(instruction);
+      return { replacementResourceExternalId: restored.resourceExternalId };
+    }
+    if (instruction.actionType === 'start_load_balancer') {
+      await this.provider.startLoadBalancer(instruction);
+      return {};
+    }
+    if (instruction.actionType === 'resize_instance') {
+      await this.provider.resizeInstanceBack(instruction);
+      if (this.provider.waitForInstanceReady && instruction.instanceType) {
+        await this.provider.waitForInstanceReady(resource, instruction.instanceType);
+      }
+      return {};
+    }
     throw new Error(`Unsupported rollback action: ${instruction.actionType}`);
   }
 }

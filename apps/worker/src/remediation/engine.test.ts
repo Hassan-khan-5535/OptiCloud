@@ -54,6 +54,7 @@ class MemoryRemediationRepository implements RemediationRepository {
   }
 
   async setRollbackAction(_actionId: string, rollbackAction: Record<string, unknown>): Promise<void> { this.record.rollbackAction = rollbackAction; }
+  async updateResourceExternalId(_resourceId: string, externalId: string): Promise<void> { this.record.resource.externalId = externalId; }
 
   async transitionFinding(input: { findingId: string; toStatus: FindingStatus; reason: string }): Promise<void> {
     assert.equal(input.findingId, this.record.findingId);
@@ -94,6 +95,20 @@ test('unattached volume snapshots before delete and records provider failure in 
   ]);
 });
 
+test('EBS deletion without availability-zone metadata is blocked before provider mutation', async () => {
+  const provider = new MockCloudRemediationProvider();
+  const repository = new MemoryRemediationRepository(makeRecord({ resource: { ...baseRecord.resource, metadata: { sizeGiB: 100 } } }));
+  const engine = new DefaultRemediationEngine(repository, provider, new InMemoryRateLimiter());
+
+  const result = await engine.executeFinding('finding-1');
+
+  assert.equal(result.status, 'failed');
+  assert.match(result.reason ?? '', /availabilityZone metadata/);
+  assert.deepEqual(provider.calls, []);
+  assert.equal(repository.record.findingStatus, 'failed');
+  assert.equal(repository.record.actionStatus, 'failed');
+});
+
 test('retry after a transient delete failure reuses the snapshot and completes once', async () => {
   const provider = new MockCloudRemediationProvider();
   provider.failOn = 'deleteVolume';
@@ -129,6 +144,32 @@ test('RDS maps to resize down one tier and never to stop or delete', () => {
   const record = makeRecord({ findingType: 'underutilized_rds', resource: { ...baseRecord.resource, resourceType: 'rds_instance', metadata: { instanceType: 'db.t3.large' } } });
   assert.deepEqual(actionPlanForFinding(record), { actionType: 'resize_instance', isReversible: true });
   assert.equal(resizeDownOneTier('db.t3.large'), 'db.t3.medium');
+});
+
+test('EBS rollback reconciles the resource external ID before marking rolled back', async () => {
+  const provider = new MockCloudRemediationProvider();
+  const repository = new MemoryRemediationRepository(makeRecord({
+    findingStatus: 'completed',
+    actionId: 'action-1',
+    actionType: 'delete_volume',
+    actionStatus: 'completed',
+    rollbackAction: {
+      cloudAccountId: 'account-1',
+      provider: 'aws',
+      actionType: 'restore_volume_snapshot',
+      resourceExternalId: 'vol-1',
+      region: 'us-east-1',
+      snapshotId: 'snap-vol-1',
+      availabilityZone: 'us-east-1a',
+    },
+  }));
+  const engine = new DefaultRemediationEngine(repository, provider, new InMemoryRateLimiter());
+
+  const result = await engine.rollbackRemediation('action-1');
+
+  assert.equal(result.status, 'rolled_back');
+  assert.equal(repository.record.resource.externalId, 'restored-vol-1');
+  assert.deepEqual(provider.calls, ['restoreVolumeSnapshot']);
 });
 
 test('unsupported stopped load-balancer capability becomes manual review without provider mutation', async () => {

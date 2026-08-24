@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildApp } from './server.js';
-import type { Db } from '@cindr/db';
+import type { Db, PolicyRule } from '@cindr/db';
 
 test('rollback endpoint enqueues the requested remediation action', async () => {
   let actionId = '';
@@ -25,6 +25,25 @@ test('dashboard endpoints reject requests without authentication', async () => {
   const response = await app.inject({ method: 'GET', url: '/api/overview' });
   assert.equal(response.statusCode, 401);
   assert.equal(response.json().error, 'Authentication required');
+  await app.close();
+});
+
+test('organization members cannot create live policies', async () => {
+  let createCalls = 0;
+  const app = await buildApp({
+    dashboardDb: {} as Db,
+    authResolver: async () => ({ subject: 'user-member', orgId: 'org-a', role: 'member' }),
+    dashboardQueries: {
+      createPolicy: async () => {
+        createCalls += 1;
+        return { id: 'should-not-exist', rule: {} as PolicyRule, cloudAccountId: 'account-a', active: true };
+      },
+    },
+  });
+  const response = await app.inject({ method: 'POST', url: '/api/policies', payload: {} });
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.json().error, 'Insufficient organization permissions');
+  assert.equal(createCalls, 0);
   await app.close();
 });
 

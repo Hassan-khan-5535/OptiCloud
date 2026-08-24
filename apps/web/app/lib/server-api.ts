@@ -2,6 +2,13 @@ import { headers } from 'next/headers';
 
 const SERVER_API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
+export class ServerApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'ServerApiError';
+  }
+}
+
 export async function serverApiFetch<T>(path: string): Promise<T> {
   const requestHeaders = await headers();
   const cookie = requestHeaders.get('cookie');
@@ -14,7 +21,7 @@ export async function serverApiFetch<T>(path: string): Promise<T> {
     } catch {
       // Keep the status-based message when the API body is not JSON.
     }
-    throw new Error(message);
+    throw new ServerApiError(response.status, message);
   }
   return response.json() as Promise<T>;
 }

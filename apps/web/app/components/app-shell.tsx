@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../../auth';
+import { MobileNav } from './mobile-nav';
 import { UserMenu } from './user-menu';
 
 const navigation = [
@@ -40,6 +41,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
       <div className="lg:pl-64">
         <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-800/80 bg-[#070b12]/90 px-5 backdrop-blur md:px-8">
           <div className="flex items-center gap-3 lg:hidden">
+            <MobileNav />
             <span className="grid h-7 w-7 place-items-center rounded-md bg-cyan-400 text-xs font-black text-slate-950">C</span>
             <span className="text-xs font-bold tracking-[0.2em]">CINDR</span>
           </div>

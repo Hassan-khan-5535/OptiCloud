@@ -29,13 +29,13 @@ async function seed() {
 
     await db.insert(resources).values([
       { id: resourceIds.volume, orgId, cloudAccountId: accountId, type: 'ebs_volume', externalId: 'vol-0c1ndr000000001', region: 'us-east-1', metadata: { name: 'staging-unattached-volume', environment: 'staging' } },
-      { id: resourceIds.rds, orgId, cloudAccountId: accountId, type: 'rds_instance', externalId: 'cindr-staging-db', region: 'us-east-1', metadata: { engine: 'postgres', environment: 'staging' } },
+      { id: resourceIds.rds, orgId, cloudAccountId: accountId, type: 'rds_instance', externalId: 'cindr-staging-db', region: 'us-east-1', metadata: { engine: 'postgres', instanceType: 'db.t3.large', monthlySavingsCents: 8600, environment: 'staging' } },
       { id: resourceIds.ec2, orgId, cloudAccountId: accountId, type: 'ec2_instance', externalId: 'i-0c1ndr000000003', region: 'us-west-2', metadata: { instanceType: 't3.large', environment: 'development' } },
     ]).onConflictDoNothing();
 
     await db.insert(wasteFindings).values([
       { id: findingIds.proposed, orgId, resourceId: resourceIds.volume, findingType: 'unattached_volume', evidence: { reason: '0 attachments for 14 days', ageDays: 14 }, estimatedMonthlySavingsCents: 1200, status: 'detected' },
-      { id: findingIds.approved, orgId, resourceId: resourceIds.rds, findingType: 'idle_database', evidence: { reason: '0 connections for 14 days', connectionCount: 0, ageDays: 14 }, estimatedMonthlySavingsCents: 8600, status: 'detected' },
+      { id: findingIds.approved, orgId, resourceId: resourceIds.rds, findingType: 'underutilized_rds', evidence: { reason: 'Low utilization for 14 days', connectionCount: 0, avgConnections: 0, avgCpuPercent: 4, ageDays: 14 }, estimatedMonthlySavingsCents: 8600, status: 'detected' },
     ]).onConflictDoNothing();
 
     const existingAudit = await db.select({ id: auditLog.id }).from(auditLog).where(eq(auditLog.entityId, findingIds.proposed)).limit(1);

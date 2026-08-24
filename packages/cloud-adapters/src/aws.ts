@@ -3,14 +3,16 @@ import type { CloudProvider, IdleVolume, InstanceReference } from './index.js';
 
 export class AwsCloudProvider implements CloudProvider {
   private readonly client: EC2Client;
+  private readonly region: string;
 
   constructor(region = process.env.AWS_REGION ?? 'us-east-1') {
+    this.region = region;
     this.client = new EC2Client({ region });
   }
 
   async listIdleVolumes(): Promise<IdleVolume[]> {
     const result = await this.client.send(new DescribeVolumesCommand({ Filters: [{ Name: 'status', Values: ['available'] }] }));
-    return (result.Volumes ?? []).flatMap((volume) => volume.VolumeId ? [{ id: volume.VolumeId, region: process.env.AWS_REGION ?? 'unknown', sizeGiB: volume.Size }] : []);
+    return (result.Volumes ?? []).flatMap((volume) => volume.VolumeId ? [{ id: volume.VolumeId, region: this.region, sizeGiB: volume.Size }] : []);
   }
 
   async stopInstance(instance: InstanceReference): Promise<void> {

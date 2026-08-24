@@ -1,13 +1,13 @@
 services:
   postgres:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.17.2-pg16
     container_name: cindr-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cindr}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cindr-local}
       POSTGRES_DB: ${POSTGRES_DB:-cindr}
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - cindr_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,10 +17,10 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: cindr-redis
     ports:
-      - "${REDIS_PORT:-6380}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
     volumes:
       - cindr_redis_data:/data
     healthcheck:
@@ -39,15 +39,20 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-cindr}:${POSTGRES_PASSWORD:-cindr-local}@postgres:5432/${POSTGRES_DB:-cindr}
       REDIS_URL: redis://redis:6379
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      AUTH_SECRET: ${AUTH_SECRET:-local-only-change-this-secret}
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET to a high-entropy value before starting Cindr}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
-      GITHUB_ID: ${GITHUB_ID:-not-configured}
-      GITHUB_SECRET: ${GITHUB_SECRET:-not-configured}
-      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-not-configured}
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-not-configured}
-      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-not-configured}
+      GITHUB_ID: ${GITHUB_ID:-}
+      GITHUB_SECRET: ${GITHUB_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
     ports:
       - "${API_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,6 +68,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-cindr}:${POSTGRES_PASSWORD:-cindr-local}@postgres:5432/${POSTGRES_DB:-cindr}
       REDIS_URL: redis://redis:6379
       AWS_REGION: ${AWS_REGION:-us-east-1}
+      METRICS_PROVIDER: ${METRICS_PROVIDER:-mock}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
@@ -81,14 +87,19 @@ services:
       API_URL: ${API_URL:-http://api:4000}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/cindr}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
-      AUTH_SECRET: ${AUTH_SECRET:-local-only-change-this-secret}
-      GITHUB_ID: ${GITHUB_ID:-not-configured}
-      GITHUB_SECRET: ${GITHUB_SECRET:-not-configured}
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET to a high-entropy value before starting Cindr}
+      GITHUB_ID: ${GITHUB_ID:-}
+      GITHUB_SECRET: ${GITHUB_SECRET:-}
     ports:
       - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/auth/signin').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   cindr_postgres_data:

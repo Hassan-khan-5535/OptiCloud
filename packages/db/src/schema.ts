@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -59,6 +60,7 @@ export const organizations = pgTable('organizations', {
   slug: varchar('slug', { length: 128 }).notNull().unique(),
   name: varchar('name', { length: 255 }).notNull(),
   slackTeamId: varchar('slack_team_id', { length: 64 }).unique(),
+  slackChannelId: varchar('slack_channel_id', { length: 64 }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -72,6 +74,7 @@ export const organizationMembers = pgTable('organization_members', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   userOrgUnique: uniqueIndex('organization_members_user_org_idx').on(table.userSubject, table.orgId),
+  roleCheck: check('organization_members_role_chk', sql`${table.role} IN ('admin', 'operator', 'member')`),
 }));
 
 export const cloudAccounts = pgTable('cloud_accounts', {
@@ -83,6 +86,7 @@ export const cloudAccounts = pgTable('cloud_accounts', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   providerExternalIdUnique: uniqueIndex('cloud_accounts_provider_external_id_idx').on(table.orgId, table.provider, table.externalId),
+  orgIdIdUnique: uniqueIndex('cloud_accounts_org_id_id_idx').on(table.orgId, table.id),
 }));
 
 export const resources = pgTable('resources', {
@@ -98,6 +102,12 @@ export const resources = pgTable('resources', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   cloudResourceUnique: uniqueIndex('resources_cloud_account_type_external_id_idx').on(table.cloudAccountId, table.type, table.externalId),
+  orgIdIdUnique: uniqueIndex('resources_org_id_id_idx').on(table.orgId, table.id),
+  cloudAccountTenantFk: foreignKey({
+    name: 'resources_org_cloud_account_fk',
+    columns: [table.orgId, table.cloudAccountId],
+    foreignColumns: [cloudAccounts.orgId, cloudAccounts.id],
+  }),
 }));
 
 export const resourceMetrics = pgTable('resource_metrics', {
@@ -109,6 +119,12 @@ export const resourceMetrics = pgTable('resource_metrics', {
   recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
 }, (table) => ({
   resourceMetricTimeIdx: index('resource_metrics_resource_metric_time_idx').on(table.resourceId, table.metricName, table.recordedAt),
+  resourceMetricUnique: uniqueIndex('resource_metrics_resource_metric_unique_idx').on(table.resourceId, table.metricName, table.recordedAt),
+  resourceTenantFk: foreignKey({
+    name: 'resource_metrics_org_resource_fk',
+    columns: [table.orgId, table.resourceId],
+    foreignColumns: [resources.orgId, resources.id],
+  }),
 }));
 
 export const wasteFindings = pgTable('waste_findings', {
@@ -126,6 +142,12 @@ export const wasteFindings = pgTable('waste_findings', {
   openFindingNaturalKey: uniqueIndex('waste_findings_open_natural_key_idx')
     .on(table.resourceId, table.findingType)
     .where(sql`${table.status} NOT IN ('completed', 'rolled_back', 'denied', 'expired')`),
+  orgIdIdUnique: uniqueIndex('waste_findings_org_id_id_idx').on(table.orgId, table.id),
+  resourceTenantFk: foreignKey({
+    name: 'waste_findings_org_resource_fk',
+    columns: [table.orgId, table.resourceId],
+    foreignColumns: [resources.orgId, resources.id],
+  }),
 }));
 
 export const remediationActions = pgTable('remediation_actions', {
@@ -141,7 +163,13 @@ export const remediationActions = pgTable('remediation_actions', {
   idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  findingTenantFk: foreignKey({
+    name: 'remediation_actions_org_finding_fk',
+    columns: [table.orgId, table.wasteFindingId],
+    foreignColumns: [wasteFindings.orgId, wasteFindings.id],
+  }),
+}));
 
 export const auditLog = pgTable('audit_log', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -166,7 +194,14 @@ export const policies = pgTable('policies', {
   active: boolean('active').default(true).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  orgIdIdUnique: uniqueIndex('policies_org_id_id_idx').on(table.orgId, table.id),
+  accountTenantFk: foreignKey({
+    name: 'policies_org_cloud_account_fk',
+    columns: [table.orgId, table.cloudAccountId],
+    foreignColumns: [cloudAccounts.orgId, cloudAccounts.id],
+  }),
+}));
 
 export const policyEvaluations = pgTable('policy_evaluations', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -180,6 +215,16 @@ export const policyEvaluations = pgTable('policy_evaluations', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   policyFindingCreatedIdx: index('policy_evaluations_policy_finding_created_idx').on(table.policyId, table.wasteFindingId, table.createdAt),
+  policyTenantFk: foreignKey({
+    name: 'policy_evaluations_org_policy_fk',
+    columns: [table.orgId, table.policyId],
+    foreignColumns: [policies.orgId, policies.id],
+  }),
+  findingTenantFk: foreignKey({
+    name: 'policy_evaluations_org_finding_fk',
+    columns: [table.orgId, table.wasteFindingId],
+    foreignColumns: [wasteFindings.orgId, wasteFindings.id],
+  }),
 }));
 
 export type Organization = typeof organizations.$inferSelect;

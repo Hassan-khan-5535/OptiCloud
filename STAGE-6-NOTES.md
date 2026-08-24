@@ -6,12 +6,12 @@ The Next.js dashboard now renders live data from the PostgreSQL-backed API. The 
 
 The finding timeline is a shared component and explicitly renders `from_status → to_status`, actor, timestamp, and reason. The shared status badge uses one mapping for all finding and remediation states, including the attention shade for `failed`. The rollback control calls the Stage 5 `POST /api/remediations/:remediationActionId/rollback` endpoint and is rendered only when the linked action is reversible and completed.
 
-The policies page lists active `auto_approve` policies from the `policies` table and creates new rules through `POST /api/policies`. The API validates the same detector finding types and the existing `finding_type` / `action` matching contract, and accepts exactly one of `min_age_days` or `threshold`. The accounts page lists connected cloud accounts from `cloud_accounts`.
+The policies page lists both live and dry-run rules from the `policies` table and creates new rules through `POST /api/policies`. The API validates the same detector finding types and the existing `finding_type` / `action` matching contract, enforces organization roles and cloud-account tenancy, and accepts exactly one of `min_age_days` or `threshold`. The accounts page lists connected cloud accounts from `cloud_accounts`.
 
-## Intentionally stubbed
+## Current limitations
 
-The “Connect AWS account” control is UI-only. It displays an explanatory message and includes a TODO marker for the future OAuth or role-assumption flow. It does not exchange credentials, create an account, or mutate infrastructure. Authentication is also intentionally absent for Stage 6, as requested.
+The “Connect AWS account” control remains intentionally unavailable until the OAuth or role-assumption flow is implemented; the UI now labels it as unavailable rather than presenting a misleading active action. Production detection uses the tenant-scoped database metrics provider, while the explicit `METRICS_PROVIDER=mock` mode is reserved for local demos and tests. Real cloud-account onboarding and provider resource synchronization remain future work.
 
 ## Validation
 
-`npm run typecheck` passes. `npm run build` passes for all workspaces, including Next.js production compilation. `npm test` passes all 17 tests across worker, Slack, and API workspaces, including four new policy-contract tests. `git diff --check` passes. Browser smoke tests verified the overview, policies, accounts, and dynamic finding routes, plus the AWS stub interaction. Docker was unavailable in the sandbox, so browser verification used the API’s explicit no-database error state; no mock data was added.
+`npm ci`, `npm test`, `npm run typecheck`, `npm run lint`, and `npm run build` pass after the repair batches. Production-only `npm audit --omit=dev` reports zero vulnerabilities. Migration journal JSON and generated migrations validate. Docker was unavailable in the sandbox, so Compose runtime execution was not performed; static Compose edits were reviewed. No tracked source files were modified during the initial audit; repair changes are now intentionally present in the working tree.

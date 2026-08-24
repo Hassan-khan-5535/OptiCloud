@@ -1,9 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import cors from '@fastify/cors';
 import { WebClient } from '@slack/web-api';
-import { createDb, orgScope, remediationActions, type Db } from '@cindr/db';
+import { createDb, orgScope, organizations, remediationActions, type Db } from '@cindr/db';
 import { authenticateRequest, type AuthenticatedContext } from './auth.js';
 import { bindSlackWorkspace, resolveOrganizationForSlackTeam, resolveOrganizationForUser } from './organizations.js';
 import { buildWasteFindingMessage } from '@cindr/slack';
@@ -72,7 +72,7 @@ function createDefaultDependencies(): ApiDependencies {
 }
 
 export async function buildApp(overrides: ApiDependencies = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: Number(process.env.API_BODY_LIMIT_BYTES ?? 1_048_576) });
   const dashboardDb = overrides.dashboardDb ?? (process.env.DATABASE_URL ? createDb().db : undefined);
   const dashboardQueries: DashboardQueries = {
     getDashboardOverview,
@@ -85,9 +85,20 @@ export async function buildApp(overrides: ApiDependencies = {}): Promise<Fastify
   const authResolver = overrides.authResolver ?? (async (request: import('fastify').FastifyRequest) => {
     if (!dashboardDb) return null;
     const user = await authenticateRequest(request);
-    return user ? resolveOrganizationForUser(dashboardDb, user) : null;
+    const requestedOrgId = typeof request.headers['x-organization-id'] === 'string' ? request.headers['x-organization-id'].trim() : undefined;
+    return user ? resolveOrganizationForUser(dashboardDb, user, requestedOrgId) : null;
   });
-  await app.register(cors, { origin: true });
+  const allowedCorsOrigins = new Set((process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(',').map((origin) => origin.trim()).filter(Boolean));
+  await app.register(cors, {
+    origin: (origin, callback) => callback(null, !origin || allowedCorsOrigins.has(origin)),
+    credentials: true,
+  });
+  const requireSameOrigin = (request: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply): boolean => {
+    const origin = request.headers.origin;
+    if (!origin || allowedCorsOrigins.has(origin)) return true;
+    reply.code(403).send({ error: 'Cross-origin mutation rejected' });
+    return false;
+  };
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => done(null, body));
 
   app.get('/health', async () => ({
@@ -98,6 +109,17 @@ export async function buildApp(overrides: ApiDependencies = {}): Promise<Fastify
   }));
 
   app.get('/', async () => ({ name: 'Cindr API', tagline: 'Catch the waste before it burns.' }));
+
+  app.get('/ready', async (_request, reply) => {
+    if (!dashboardDb) return reply.code(503).send({ status: 'not_ready', reason: 'Database is not configured' });
+    try {
+      await dashboardDb.execute(sql`select 1`);
+      return reply.send({ status: 'ready' });
+    } catch (error) {
+      app.log.error(error, 'Readiness database check failed');
+      return reply.code(503).send({ status: 'not_ready', reason: 'Database is unavailable' });
+    }
+  });
 
   app.get('/api/overview', async (request, reply) => {
     const db = dashboardDb;
@@ -141,18 +163,21 @@ export async function buildApp(overrides: ApiDependencies = {}): Promise<Fastify
   });
 
   app.post('/api/policies', async (request, reply) => {
+    if (!requireSameOrigin(request, reply)) return;
     const db = dashboardDb;
     if (!db) return reply.code(503).send({ error: 'Database is not configured' });
     const context = await requireOrgContext(request, reply, authResolver);
-    if (!context) return;
+    if (!context || !requireRole(context, reply, ['admin'])) return;
     const validated = validatePolicyInput(request.body);
     if (validated.error || !validated.value) return reply.code(400).send({ error: validated.error ?? 'Invalid policy' });
     try {
-      return reply.code(201).send(await dashboardQueries.createPolicy(db, validated.value, context.orgId));
+      return reply.code(201).send(await dashboardQueries.createPolicy(db, validated.value, context.orgId, context.subject));
     } catch (error) {
       app.log.error(error, 'Failed to create policy');
       const message = error instanceof Error ? error.message : 'Failed to create policy';
-      return reply.code(message.includes('No connected cloud account') ? 409 : 500).send({ error: message });
+      const statusCode = message.includes('No connected cloud account') ? 409 : message.includes('Cloud account not found') ? 404 : 500;
+      const clientMessage = statusCode === 500 ? 'Failed to create policy' : message;
+      return reply.code(statusCode).send({ error: clientMessage });
     }
   });
 
@@ -170,15 +195,18 @@ export async function buildApp(overrides: ApiDependencies = {}): Promise<Fastify
   });
 
   app.post('/api/integrations/slack/bind', async (request, reply) => {
+    if (!requireSameOrigin(request, reply)) return;
     const db = dashboardDb;
     if (!db) return reply.code(503).send({ error: 'Database is not configured' });
     const context = await requireOrgContext(request, reply, authResolver);
-    if (!context) return;
+    if (!context || !requireRole(context, reply, ['admin'])) return;
     const body = request.body && typeof request.body === 'object' ? request.body as Record<string, unknown> : {};
     const teamId = typeof body.team_id === 'string' ? body.team_id.trim() : '';
+    const channelId = typeof body.channel_id === 'string' ? body.channel_id.trim() : '';
     if (!teamId) return reply.code(400).send({ error: 'team_id is required' });
+    if (!channelId) return reply.code(400).send({ error: 'channel_id is required' });
     try {
-      return reply.code(201).send(await bindSlackWorkspace(db, context.orgId, teamId));
+      return reply.code(201).send(await bindSlackWorkspace(db, context.orgId, teamId, channelId));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Slack workspace binding failed';
       return reply.code(message.includes('already') ? 409 : 400).send({ error: message });
@@ -224,13 +252,14 @@ export async function buildApp(overrides: ApiDependencies = {}): Promise<Fastify
     } catch (error) {
       const statusCode = typeof error === 'object' && error && 'statusCode' in error ? Number(error.statusCode) : 500;
       const message = error instanceof Error ? error.message : 'Slack interaction failed';
-      return reply.code(statusCode).send({ error: message });
+      return reply.code(statusCode).send({ error: statusCode >= 500 ? 'Slack interaction failed' : message });
     }
   });
 
   app.post<{ Params: { remediationActionId: string } }>('/api/remediations/:remediationActionId/rollback', async (request, reply) => {
+    if (!requireSameOrigin(request, reply)) return;
     const context = await requireOrgContext(request, reply, authResolver);
-    if (!context) return;
+    if (!context || !requireRole(context, reply, ['admin', 'operator'])) return;
     if (dashboardDb) {
       const [action] = await dashboardDb.select({ id: remediationActions.id }).from(remediationActions).where(orgScope(remediationActions.orgId, context.orgId, eq(remediationActions.id, request.params.remediationActionId))).limit(1);
       if (!action) return reply.code(404).send({ error: 'Remediation action not found' });
@@ -242,12 +271,14 @@ export async function buildApp(overrides: ApiDependencies = {}): Promise<Fastify
   });
 
   app.post<{ Params: { findingId: string } }>('/slack/findings/:findingId/notify', async (request, reply) => {
+    if (!requireSameOrigin(request, reply)) return;
     const context = await requireOrgContext(request, reply, authResolver);
-    if (!context) return;
+    if (!context || !requireRole(context, reply, ['admin', 'operator'])) return;
     const repository = overrides.findingRepository ?? (dashboardDb ? new DrizzleApprovalRepository(dashboardDb, context.orgId) : undefined);
     const slack = overrides.slackClient ?? createDefaultSlackClient();
-    const channel = process.env.SLACK_CHANNEL_ID;
-    if (!repository || !slack || !channel) return reply.code(503).send({ error: 'Slack notification integration is not configured' });
+    const [organization] = dashboardDb ? await dashboardDb.select({ channelId: organizations.slackChannelId }).from(organizations).where(eq(organizations.id, context.orgId)).limit(1) : [];
+    const channel = organization?.channelId;
+    if (!repository || !slack || !channel) return reply.code(503).send({ error: 'Slack notification integration is not configured for this organization' });
     const finding = await repository.getFindingContext(request.params.findingId);
     if (!finding) return reply.code(404).send({ error: 'Waste finding not found' });
     const message = buildWasteFindingMessage(toWasteFindingMessageInput(finding));
@@ -267,12 +298,28 @@ function resolveSlackDependencies(overrides: ApiDependencies, db: Db, orgId: str
   return { repository, queue, slack, signingSecret, orgId };
 }
 
+function requireRole(
+  context: AuthenticatedContext,
+  reply: import('fastify').FastifyReply,
+  allowedRoles: readonly AuthenticatedContext['role'][],
+): boolean {
+  if (allowedRoles.includes(context.role)) return true;
+  reply.code(403).send({ error: 'Insufficient organization permissions' });
+  return false;
+}
+
 async function requireOrgContext(
   request: import('fastify').FastifyRequest,
   reply: import('fastify').FastifyReply,
   resolver: (request: import('fastify').FastifyRequest) => Promise<AuthenticatedContext | null>,
 ): Promise<AuthenticatedContext | null> {
-  const context = await resolver(request);
+  let context: AuthenticatedContext | null;
+  try {
+    context = await resolver(request);
+  } catch {
+    reply.code(403).send({ error: 'Organization access denied' });
+    return null;
+  }
   if (!context) {
     reply.code(401).send({ error: 'Authentication required' });
     return null;

@@ -12,9 +12,21 @@ spec:
     metadata:
       labels: { app: cindr-postgres }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: postgres
-          image: timescale/timescaledb:latest-pg16
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          image: timescale/timescaledb:2.17.2-pg16
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 2Gi }
           ports:
             - name: postgres
               containerPort: 5432

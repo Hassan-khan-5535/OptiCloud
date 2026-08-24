@@ -173,7 +173,7 @@ export async function listPolicies(db: Db, orgId: string) {
     createdAt: policyEvaluations.createdAt,
   }).from(policyEvaluations).where(orgScope(policyEvaluations.orgId, orgId)).orderBy(desc(policyEvaluations.createdAt));
 
-  return rows.map((row) => ({ ...row, parsedRule: parsePolicyRule(row.rule).value })).filter((row): row is typeof row & { parsedRule: NonNullable<ReturnType<typeof parsePolicyRule>['value']> } => !!row.parsedRule && row.parsedRule.action === 'auto_approve').map((row) => ({
+  return rows.map((row) => ({ ...row, parsedRule: parsePolicyRule(row.rule).value })).filter((row): row is typeof row & { parsedRule: NonNullable<ReturnType<typeof parsePolicyRule>['value']> } => !!row.parsedRule).map((row) => ({
     id: row.id,
     rule: row.parsedRule,
     createdBy: row.createdBy,
@@ -216,10 +216,13 @@ export function validatePolicyInput(input: unknown): { value?: PolicyInput; erro
   return { value: { cloudAccountId, name, findingType, action, conditions: [...parsed.value.all], active } };
 }
 
-export async function createPolicy(db: Db, input: PolicyInput, orgId: string) {
-  const accountId = input.cloudAccountId ?? (await db.select({ id: cloudAccounts.id }).from(cloudAccounts).where(eq(cloudAccounts.orgId, orgId)).orderBy(cloudAccounts.createdAt).limit(1))[0]?.id;
+export async function createPolicy(db: Db, input: PolicyInput, orgId: string, createdBy = 'dashboard') {
+  const accountId = input.cloudAccountId
+    ? (await db.select({ id: cloudAccounts.id }).from(cloudAccounts).where(and(eq(cloudAccounts.id, input.cloudAccountId), eq(cloudAccounts.orgId, orgId))).limit(1))[0]?.id
+    : (await db.select({ id: cloudAccounts.id }).from(cloudAccounts).where(eq(cloudAccounts.orgId, orgId)).orderBy(cloudAccounts.createdAt).limit(1))[0]?.id;
+  if (input.cloudAccountId && !accountId) throw new Error('Cloud account not found for organization');
   if (!accountId) throw new Error('No connected cloud account is available');
   const rule = buildPolicyRule({ name: input.name, findingType: input.findingType, action: input.action, conditions: input.conditions });
-  const [created] = await db.insert(policies).values({ orgId, cloudAccountId: accountId, rule, createdBy: 'dashboard', active: input.active }).returning({ id: policies.id });
+  const [created] = await db.insert(policies).values({ orgId, cloudAccountId: accountId, rule, createdBy, active: input.active }).returning({ id: policies.id });
   return { id: created?.id, rule, cloudAccountId: accountId, active: input.active };
 }

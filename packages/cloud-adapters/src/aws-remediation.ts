@@ -4,12 +4,13 @@ import {
   DeleteVolumeCommand,
   EC2Client,
 } from '@aws-sdk/client-ec2';
-import { ModifyDBInstanceCommand, RDSClient } from '@aws-sdk/client-rds';
+import { DescribeDBInstancesCommand, ModifyDBInstanceCommand, RDSClient } from '@aws-sdk/client-rds';
 import type {
   CloudRemediationProvider,
   RemediationResource,
   RollbackInstruction,
   SnapshotReference,
+  RestoredResourceReference,
 } from './remediation.js';
 
 /**
@@ -47,13 +48,32 @@ export class AwsSdkRemediationProvider implements CloudRemediationProvider {
     return { previousInstanceType, targetInstanceType };
   }
 
-  async restoreVolumeSnapshot(instruction: RollbackInstruction): Promise<void> {
+  async waitForInstanceReady(resource: RemediationResource, expectedInstanceType: string): Promise<void> {
+    const client = new RDSClient({ region: resource.region });
+    const timeoutMs = Math.max(5_000, Number(process.env.RDS_OPERATION_TIMEOUT_MS ?? 300_000));
+    const deadline = Date.now() + timeoutMs;
+    let delayMs = 2_000;
+    while (Date.now() < deadline) {
+      const result = await client.send(new DescribeDBInstancesCommand({ DBInstanceIdentifier: resource.externalId }));
+      const instance = result.DBInstances?.[0];
+      if (!instance) throw new Error(`RDS instance not found while waiting for ${resource.externalId}`);
+      if (instance.DBInstanceStatus === 'available' && instance.DBInstanceClass === expectedInstanceType) return;
+      if (instance.DBInstanceStatus === 'failed') throw new Error(`RDS instance entered failed state while changing ${resource.externalId}`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(delayMs * 2, 15_000);
+    }
+    throw new Error(`Timed out waiting for RDS instance ${resource.externalId} to become ${expectedInstanceType}`);
+  }
+
+  async restoreVolumeSnapshot(instruction: RollbackInstruction): Promise<RestoredResourceReference> {
     if (!instruction.snapshotId || !instruction.availabilityZone) throw new Error('Rollback requires snapshotId and availabilityZone for EBS restore');
-    await new EC2Client({ region: instruction.region }).send(new CreateVolumeCommand({
+    const result = await new EC2Client({ region: instruction.region }).send(new CreateVolumeCommand({
       SnapshotId: instruction.snapshotId,
       AvailabilityZone: instruction.availabilityZone,
       TagSpecifications: [{ ResourceType: 'volume', Tags: [{ Key: 'cindr-rollback-of', Value: instruction.resourceExternalId }] }],
     }));
+    if (!result.VolumeId) throw new Error('AWS did not return a replacement volume ID for EBS rollback');
+    return { resourceExternalId: result.VolumeId, region: instruction.region };
   }
 
   async startLoadBalancer(_instruction: RollbackInstruction): Promise<void> {

@@ -16,6 +16,11 @@ export type SnapshotReference = {
   region: string;
 };
 
+export type RestoredResourceReference = {
+  resourceExternalId: string;
+  region: string;
+};
+
 export type RemediationExecution =
   | { actionType: 'delete_volume'; snapshot: SnapshotReference }
   | { actionType: 'stop_load_balancer'; stopped: boolean }
@@ -43,7 +48,8 @@ export interface CloudRemediationProvider {
   deleteVolume(resource: RemediationResource): Promise<void>;
   stopLoadBalancer(resource: RemediationResource): Promise<{ stopped: boolean }>;
   resizeInstance(resource: RemediationResource, targetInstanceType: string): Promise<{ previousInstanceType: string; targetInstanceType: string }>;
-  restoreVolumeSnapshot(instruction: RollbackInstruction): Promise<void>;
+  waitForInstanceReady?(resource: RemediationResource, expectedInstanceType: string): Promise<void>;
+  restoreVolumeSnapshot(instruction: RollbackInstruction): Promise<RestoredResourceReference>;
   startLoadBalancer(instruction: RollbackInstruction): Promise<void>;
   resizeInstanceBack(instruction: RollbackInstruction): Promise<void>;
 }
@@ -53,7 +59,7 @@ export type AwsRemediationApi = {
   deleteVolume(resource: RemediationResource): Promise<void>;
   stopLoadBalancer(resource: RemediationResource): Promise<{ stopped: boolean }>;
   resizeInstance(resource: RemediationResource, targetInstanceType: string): Promise<{ previousInstanceType: string; targetInstanceType: string }>;
-  restoreSnapshot(instruction: RollbackInstruction): Promise<void>;
+  restoreSnapshot(instruction: RollbackInstruction): Promise<RestoredResourceReference>;
   startLoadBalancer(instruction: RollbackInstruction): Promise<void>;
   resizeInstanceBack(instruction: RollbackInstruction): Promise<void>;
 };
@@ -97,7 +103,10 @@ export class MockCloudRemediationProvider implements CloudRemediationProvider {
     return { previousInstanceType: String(resource.metadata?.instanceType ?? 'db.t3.medium'), targetInstanceType };
   }
 
-  async restoreVolumeSnapshot(instruction: RollbackInstruction): Promise<void> { this.maybeFail('restoreVolumeSnapshot'); }
+  async restoreVolumeSnapshot(instruction: RollbackInstruction): Promise<RestoredResourceReference> {
+    this.maybeFail('restoreVolumeSnapshot');
+    return { resourceExternalId: `restored-${instruction.resourceExternalId}`, region: instruction.region };
+  }
   async startLoadBalancer(instruction: RollbackInstruction): Promise<void> { this.maybeFail('startLoadBalancer'); }
   async resizeInstanceBack(instruction: RollbackInstruction): Promise<void> { this.maybeFail('resizeInstanceBack'); }
 }

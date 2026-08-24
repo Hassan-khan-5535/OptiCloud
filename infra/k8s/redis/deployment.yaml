@@ -11,9 +11,21 @@ spec:
     metadata:
       labels: { app: cindr-redis }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: redis
-          image: redis:7-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          image: redis:7.4-alpine
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
           args: ["redis-server", "--appendonly", "yes"]
           ports:
             - name: redis

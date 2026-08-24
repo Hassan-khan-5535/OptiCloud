@@ -4,7 +4,7 @@ import { FindingTimeline } from '../../components/finding-timeline';
 import { RollbackButton } from '../../components/rollback-button';
 import { StatusBadge } from '../../components/status-badge';
 import { formatCurrency, formatDate, humanize, type FindingDetail } from '../../lib/api';
-import { serverApiFetch } from '../../lib/server-api';
+import { ServerApiError, serverApiFetch } from '../../lib/server-api';
 
 function JsonBlock({ value }: { value: Record<string, unknown> }) {
   return <pre className="max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-[#070b12] p-4 font-mono text-xs leading-6 text-cyan-100/80">{JSON.stringify(value, null, 2)}</pre>;
@@ -16,7 +16,7 @@ export default async function FindingPage({ params }: { params: Promise<{ id: st
   try {
     finding = await serverApiFetch<FindingDetail>(`/api/findings/${id}`);
   } catch (error) {
-    if (error instanceof Error && error.message.includes('(404)')) notFound();
+    if (error instanceof ServerApiError && error.status === 404) notFound();
     return <div className="space-y-5"><Link href="/" className="text-xs text-cyan-300 hover:text-cyan-200">← Back to overview</Link><div className="rounded-xl border border-rose-400/20 bg-rose-400/5 p-5 text-sm text-rose-200">Finding data unavailable. {error instanceof Error ? error.message : 'The API request failed'}.</div></div>;
   }
 

@@ -58,7 +58,7 @@ export class DrizzleDetectionStore implements DetectionStore {
       metricName: point.metricName,
       value: point.value,
       recordedAt: point.recordedAt,
-    })));
+    }))).onConflictDoNothing({ target: [resourceMetrics.resourceId, resourceMetrics.metricName, resourceMetrics.recordedAt] });
   }
 
   async upsertFinding(input: DetectionFindingInput): Promise<{ id: string; status: FindingStatus } | null> {
@@ -134,6 +134,7 @@ export type DetectorContext = {
   provider: CloudMetricsProvider;
   store: DetectionStore;
   config: DetectionConfig;
+  providerSupportsStoppedLoadBalancer?: boolean;
   now?: () => Date;
   actor?: AuditActor;
 };
@@ -165,6 +166,7 @@ export async function persistDetection(ctx: DetectorContext, input: DetectionFin
     findingType: input.findingType,
     evidence: input.evidence,
     estimatedMonthlySavingsCents: input.estimatedMonthlySavingsCents,
+    providerSupportsStoppedLoadBalancer: ctx.providerSupportsStoppedLoadBalancer,
   });
   const approvedBy = evaluations.find((evaluation) => evaluation.eligibleForApproval);
   if (finding.status !== 'detected') return;

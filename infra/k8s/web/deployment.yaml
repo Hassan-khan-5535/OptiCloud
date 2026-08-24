@@ -7,9 +7,18 @@ spec:
   template:
     metadata: { labels: { app: cindr-web } }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: web
-          image: cindr/web:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          image: ghcr.io/atifkhani397/cindr-web:latest
           ports: [{ containerPort: 3000 }]
           envFrom:
             - configMapRef: { name: cindr-web-config }

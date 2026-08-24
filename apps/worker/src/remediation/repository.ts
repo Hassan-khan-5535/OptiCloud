@@ -125,6 +125,14 @@ export class DrizzleRemediationRepository {
       .where(orgScope(remediationActions.orgId, this.orgId, eq(remediationActions.id, actionId)));
   }
 
+  async updateResourceExternalId(resourceId: string, externalId: string): Promise<void> {
+    const updated = await this.db.update(resources)
+      .set({ externalId, updatedAt: new Date() })
+      .where(orgScope(resources.orgId, this.orgId, eq(resources.id, resourceId)))
+      .returning({ id: resources.id });
+    if (!updated[0]) throw new Error(`Resource not found for rollback reconciliation: ${resourceId}`);
+  }
+
   async transitionFinding(input: { findingId: string; toStatus: FindingStatus; actor: AuditActor; reason: string }): Promise<void> {
     await transitionWasteFinding(this.db, { ...input, orgId: this.orgId });
   }

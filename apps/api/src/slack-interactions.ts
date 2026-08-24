@@ -161,24 +161,39 @@ export async function handleSlackInteraction(
   headers: { 'x-slack-request-timestamp'?: string; 'x-slack-signature'?: string },
   body: SlackInteractionBody,
   deps: SlackInteractionDependencies,
-): Promise<{ status: 'approved' | 'denied'; duplicate: false }> {
+): Promise<{ status: 'approved' | 'denied'; duplicate: boolean }> {
   verifySlackSignature(rawBody, headers, deps.signingSecret, deps.nowSeconds);
   if (body.type !== 'block_actions') throw new SlackRequestError(400, 'Unsupported Slack interaction type');
   const action = body.actions?.[0];
   if (!action?.action_id || !action.value) throw new SlackRequestError(400, 'Missing Slack action');
-  const parsed = parseApprovalActionValue(action.value);
+  let parsed: ReturnType<typeof parseApprovalActionValue>;
+  try {
+    parsed = parseApprovalActionValue(action.value);
+  } catch {
+    throw new SlackRequestError(400, 'Invalid Cindr Slack action value');
+  }
   const expectedActionId = action.action_id === 'cindr_approve' ? `cindr:approve:${parsed.findingId}` : action.action_id === 'cindr_deny' ? `cindr:deny:${parsed.findingId}` : '';
   if (!expectedActionId || parsed.actionId !== expectedActionId) throw new SlackRequestError(400, 'Invalid Cindr action payload');
 
+  const channel = typeof body.message?.channel === 'string' ? body.message.channel : body.message?.channel?.id;
+  const ts = body.message?.ts;
+  if (!channel || !ts) throw new SlackRequestError(400, 'Missing original Slack message reference');
+
   const finding = await deps.repository.getFindingContext(parsed.findingId);
   if (!finding) throw new SlackRequestError(404, 'Waste finding not found');
+  const actor: AuditActor = body.user?.id ? `slack_user_id:${body.user.id}` : 'system';
+  const isApproval = action.action_id === 'cindr_approve';
   if (finding.status !== 'proposed') {
-    // A second Slack delivery is intentionally rejected instead of re-transitioning or enqueueing again.
+    // Approval retries are safe because the queue uses a deterministic job ID.
+    if (isApproval && finding.status === 'approved') {
+      await deps.queue.enqueue(finding.id, deps.orgId);
+      const message = buildWasteFindingMessage(toWasteFindingMessageInput(finding));
+      await deps.slack.chat.update({ channel, ts, text: message.text, blocks: message.blocks });
+      return { status: 'approved', duplicate: true };
+    }
     throw new SlackRequestError(409, `Finding ${finding.id} is already ${finding.status}`);
   }
 
-  const actor: AuditActor = body.user?.id ? `slack_user_id:${body.user.id}` : 'system';
-  const isApproval = action.action_id === 'cindr_approve';
   await deps.repository.transitionFinding({
     findingId: finding.id,
     toStatus: isApproval ? 'approved' : 'denied',
@@ -190,9 +205,6 @@ export async function handleSlackInteraction(
 
   const resolved = await deps.repository.getFindingContext(finding.id);
   const message = buildWasteFindingMessage(toWasteFindingMessageInput(resolved ?? { ...finding, status: isApproval ? 'approved' : 'denied' }));
-  const channel = typeof body.message?.channel === 'string' ? body.message.channel : body.message?.channel?.id;
-  const ts = body.message?.ts;
-  if (!channel || !ts) throw new SlackRequestError(400, 'Missing original Slack message reference');
   await deps.slack.chat.update({ channel, ts, text: message.text, blocks: message.blocks });
   return { status: isApproval ? 'approved' : 'denied', duplicate: false };
 }

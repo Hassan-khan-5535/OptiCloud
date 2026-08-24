@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import { MotionCharts } from './components/motion-charts';
 import { StatusBadge } from './components/status-badge';
-import { formatCurrency, humanize, type Overview } from './lib/api';
+import { formatCurrency, humanize, type Overview, type Policy } from './lib/api';
 import { serverApiFetch } from './lib/server-api';
 
 function PageHeader() {
@@ -28,9 +29,15 @@ function EvidencePreview({ evidence }: { evidence: Record<string, unknown> }) {
 
 export default async function Home() {
   let data: Overview | null = null;
+  let policies: Policy[] = [];
   let error = '';
   try {
     data = await serverApiFetch<Overview>('/api/overview');
+    try {
+      policies = (await serverApiFetch<{ policies: Policy[] }>('/api/policies')).policies;
+    } catch {
+      // The overview remains usable when policy data is temporarily unavailable.
+    }
   } catch (requestError) {
     error = requestError instanceof Error ? requestError.message : 'The API request failed';
   }
@@ -45,6 +52,7 @@ export default async function Home() {
             <MetricCard label="Remediated to date" value={formatCurrency(data.totals.remediatedToDateCents)} detail="Completed findings · cumulative" accent="emerald" />
             <MetricCard label="Open findings" value={String(data.totals.openFindingCount).padStart(2, '0')} detail="Detected · proposed · approved · executing" accent="cyan" />
           </section>
+          <MotionCharts findings={data.findings} policies={policies} detectedMonthlyWasteCents={data.totals.detectedMonthlyWasteCents} remediatedToDateCents={data.totals.remediatedToDateCents} />
           <section className="overflow-hidden rounded-xl border border-slate-800/90 bg-[#0b1220] shadow-2xl shadow-black/10">
             <div className="flex flex-col gap-3 border-b border-slate-800/90 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
               <div><h2 className="text-sm font-semibold text-white">Open findings</h2><p className="mt-1 text-xs text-slate-500">Prioritized by estimated monthly savings</p></div>

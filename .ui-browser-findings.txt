@@ -1,0 +1,5 @@
+UI integration browser check — 24 Aug 2026
+
+The existing port-3000 development server was already occupied, so a separate production preview was started on port 3100. A local HEAD request succeeded with HTTP 307 and returned the new security headers: X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Referrer-Policy: strict-origin-when-cross-origin, and Permissions-Policy: camera=(), microphone=(), geolocation=(). The unauthenticated preview redirected to Auth.js configuration error, which is expected without GitHub OAuth credentials.
+
+Two attempts to inspect the preview through the connected browser returned HTTP 504 extension timeouts. Therefore no visual screenshot judgment was recorded. Static CSS, responsive breakpoints, keyboard focus styles, aria labels, and prefers-reduced-motion behavior were reviewed in source, while browser visual confirmation remains blocked by the connected-browser timeout and missing OAuth configuration.

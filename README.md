@@ -29,6 +29,22 @@ flowchart LR
 
 > **Current status:** The application, API, worker, policy engine, Slack approval path, rollback workflow, migrations, and security hardening are implemented and validated. Real AWS account onboarding and provider resource synchronization remain future work. Do not enable unattended cloud mutation until those integrations and a staging deployment have been verified.
 
+## UI preview
+
+Cindr opens with organization-scoped GitHub sign-in, then takes operators into a dark FinOps control plane for monitoring waste, reviewing findings, and managing remediation policies. The screenshots below show the current interface using representative demo data.
+
+### GitHub sign-in
+
+![Cindr GitHub sign-in screen](./docs/screenshots/cindr-sign-in.png)
+
+### Operations dashboard
+
+![Cindr operations dashboard with live motion charts](./docs/screenshots/cindr-dashboard.png)
+
+### Policy governance
+
+![Cindr policy governance and new policy form](./docs/screenshots/cindr-policies.png)
+
 ## What is included?
 
 | Area | What Cindr provides |

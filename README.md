@@ -6,6 +6,8 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/atifkhani397/OptiCloud/ci.yml?branch=main&label=CI&logo=github)](https://github.com/atifkhani397/OptiCloud/actions) [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/) [![Next.js](https://img.shields.io/badge/Next.js-16.3.2-000000?logo=next.js&logoColor=white)](https://nextjs.org/) [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![License](https://img.shields.io/badge/license-private-lightgrey)](#license)
 
+Maintained by [Quaid khan](https://github.com/Quaid-khan) · GitHub: [@Quaid-khan](https://github.com/Quaid-khan)
+
 ## Overview
 
 Cindr watches tracked cloud resources, detects common waste patterns, evaluates explicit policies, routes human approvals through Slack, executes bounded provider actions in a worker, and records state transitions in PostgreSQL. The web dashboard gives operators a focused view of findings, policies, accounts, remediation state, and rollback status.

@@ -7,7 +7,7 @@ export function ConnectAccountButton() {
         type="button"
         disabled
         aria-describedby="account-linking-status"
-        className="cursor-not-allowed rounded-lg bg-cyan-400/50 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.1em] text-slate-950/70"
+        className="cursor-not-allowed rounded-lg border border-blue-400/25 bg-blue-950/50 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.1em] text-blue-100/60"
       >
         AWS account linking unavailable
       </button>
